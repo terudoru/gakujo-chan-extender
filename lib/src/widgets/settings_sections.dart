@@ -351,6 +351,7 @@ class SettingsExpansionSection extends StatelessWidget {
     this.initiallyExpanded = false,
     this.focusNodeOnExpand,
     this.onExpansionChanged,
+    this.controller,
     this.subtitle,
   });
 
@@ -361,10 +362,12 @@ class SettingsExpansionSection extends StatelessWidget {
   final bool initiallyExpanded;
   final FocusNode? focusNodeOnExpand;
   final ValueChanged<bool>? onExpansionChanged;
+  final ExpansibleController? controller;
 
   @override
   Widget build(BuildContext context) {
     return ExpansionTile(
+      controller: controller,
       leading: Icon(icon),
       title: Text(title),
       subtitle: subtitle == null ? null : Text(subtitle!),

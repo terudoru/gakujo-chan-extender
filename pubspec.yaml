@@ -51,6 +51,8 @@ flutter:
   assets:
     - LICENSE.md
     - NOTICE.md
+    - assets/google_signin_dark.png
+    - assets/google_signin_light.png
     # pdf.js, pdf-lib and JSZip for compressing oversized uploads.
     - assets/js/upload_compression/
     - tools/pdf_preview/assets/

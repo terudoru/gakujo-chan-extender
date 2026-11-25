@@ -13,6 +13,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 import 'package:morebettergakujo_flutter/src/widgets/report_dialog.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -34,6 +35,20 @@ class _Prefs extends Fake implements GakujoLocalPrefsStore {
 
   @override
   Future<void> saveAppSettings(GakujoAppSettings settings) async {}
+}
+
+class _GoogleAuth extends Fake implements StarSyncGoogleAuth {
+  @override
+  String? currentEmail;
+
+  @override
+  int get generation => 0;
+
+  @override
+  Future<String?> restore({String? expectedEmail}) async => currentEmail;
+
+  @override
+  void cancelPendingSignIn() {}
 }
 
 class _Observer extends NavigatorObserver {
@@ -173,6 +188,7 @@ void main() {
       );
 
       final observer = _Observer();
+      final googleAuth = _GoogleAuth();
       final home = find.byTooltip('学務のHOMEへ').hitTestable();
       final close = find.widgetWithText(TextButton, '閉じる').hitTestable();
       Future<void> tap(Finder finder) async {
@@ -245,6 +261,7 @@ void main() {
             navigatorObservers: [observer],
             home: GakujoWebApp(
               localPrefsStore: _Prefs(),
+              googleAuth: googleAuth,
               gakujoReachable: () async => false,
             ),
           ),
@@ -253,6 +270,56 @@ void main() {
         sink.success({'type': 'navigationStarting', 'value': _portal});
         await tester.idle();
         sink.success({'type': 'urlChanged', 'value': _portal});
+        await tester.pumpAndSettle();
+
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        await tester.pumpAndSettle();
+        await tap(find.byTooltip('設定'));
+        final google = find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byTooltip('Google ログイン・連携'),
+        );
+        if (const StarSyncGoogleAuthConfig().isAvailable) {
+          // The Drive preference's file read completes outside fake time.
+          for (var i = 0; i < 150 && google.evaluate().isEmpty; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 10)),
+            );
+            await tester.pump();
+          }
+          expect(google.hitTestable(), findsOneWidget);
+          await tap(google);
+          await tap(find.text('キャンセル'));
+          expect(google.hitTestable(), findsOneWidget);
+          for (final (option, control) in [
+            (
+              '端末間の同期',
+              find.widgetWithText(FilledButton, 'Google ドライブで同期'),
+            ),
+            (
+              'ダウンロードの Google ドライブ保存',
+              find.widgetWithText(
+                SwitchListTile,
+                'ダウンロードしたファイルを Google ドライブにも保存する',
+              ),
+            ),
+          ]) {
+            await tap(google);
+            await tap(find.widgetWithText(ListTile, option));
+            expect(control.hitTestable(), findsOneWidget);
+            await tap(close);
+            await tap(find.byTooltip('設定'));
+          }
+          await tap(close);
+          googleAuth.currentEmail = 'fixture@example.test';
+          await tap(find.byTooltip('設定'));
+          expect(google, findsNothing);
+          googleAuth.currentEmail = null;
+        } else {
+          expect(google, findsNothing);
+        }
+        await tap(close);
+        await tester.binding.setSurfaceSize(const Size(1400, 2300));
         await tester.pumpAndSettle();
 
         for (final (title, key, marker) in [

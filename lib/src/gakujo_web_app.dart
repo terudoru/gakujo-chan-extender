@@ -749,6 +749,7 @@ class GakujoWebApp extends StatefulWidget {
     this._updateService,
     this.updateNow = DateTime.now,
     this._webViewService,
+    this._googleAuth,
     this.linuxOverlayObscured,
   });
 
@@ -765,6 +766,7 @@ class GakujoWebApp extends StatefulWidget {
   final AppUpdateService? _updateService;
   final DateTime Function() updateNow;
   final GakujoWebViewService? _webViewService;
+  final StarSyncGoogleAuth? _googleAuth;
   final ValueListenable<bool>? linuxOverlayObscured;
 
   @override
@@ -2102,7 +2104,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _activityStore = _SyncActivityStore(() {
       if (_activeLoginAccount != null) _scheduleStarSync();
     });
-    _starSyncGoogleAuth = createStarSyncGoogleAuth();
+    _starSyncGoogleAuth = widget._googleAuth ?? createStarSyncGoogleAuth();
     unawaited(_loadPlannerSharing());
     _driveDownloadsLoad = _loadDriveDownloadsPreference();
     _starSyncEngine = StarSyncEngine(
@@ -3702,6 +3704,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messageExcludeKeywordController = TextEditingController();
     var messageNotificationKeywordInput = '';
     final messageNotificationKeywordController = TextEditingController();
+    final googleAvailable = const StarSyncGoogleAuthConfig().isAvailable;
+    final syncSectionController = ExpansibleController();
+    final downloadsSectionController = ExpansibleController();
+    final syncSettingsKey = GlobalKey();
+    final driveDownloadsKey = GlobalKey();
+    var googleChoiceOpen = false;
     var starSyncBusy = false;
     var downloadRootRevision = 0;
     var downloadRootUpdating = false;
@@ -3895,6 +3903,64 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 await _applyFeatureFlagRuntimeState(flag, enabled: enabled);
                 if (flag == GakujoFeatureFlag.deadlineNotifications) {
                   unawaited(_syncReminders());
+                }
+              }
+
+              Future<void> revealGoogleSetting(
+                ExpansibleController controller,
+                GlobalKey target,
+              ) async {
+                controller.expand();
+                await WidgetsBinding.instance.endOfFrame;
+                final targetContext = target.currentContext;
+                if (targetContext == null ||
+                    !targetContext.mounted ||
+                    !settingsRoute.isCurrent) {
+                  return;
+                }
+                await Scrollable.ensureVisible(
+                  targetContext,
+                  duration: const Duration(milliseconds: 300),
+                  alignment: 0.05,
+                );
+              }
+
+              Future<void> showGoogleChoices() async {
+                if (googleChoiceOpen ||
+                    starSyncBusy ||
+                    _driveSwitchSigningIn ||
+                    _starSyncGoogleAuth.currentEmail != null) {
+                  return;
+                }
+                googleChoiceOpen = true;
+                try {
+                  final choice = await chooseSettingsAction(
+                    dialogContext,
+                    title: 'Google を使う機能',
+                    actions: [
+                      SettingsAction(
+                        label: '端末間の同期',
+                        icon: Icons.sync,
+                        description: 'スターやお気に入りなどを同期し、Google ドライブにバックアップできます。',
+                        run: () => revealGoogleSetting(
+                          syncSectionController,
+                          syncSettingsKey,
+                        ),
+                      ),
+                      SettingsAction(
+                        label: 'ダウンロードの Google ドライブ保存',
+                        icon: Icons.cloud_upload_outlined,
+                        description: 'ダウンロードしたファイルを端末と Google ドライブの両方に保存できます。',
+                        run: () => revealGoogleSetting(
+                          downloadsSectionController,
+                          driveDownloadsKey,
+                        ),
+                      ),
+                    ],
+                  );
+                  await choice?.run();
+                } finally {
+                  googleChoiceOpen = false;
                 }
               }
 
@@ -4199,6 +4265,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ),
                 ),
                 SettingsExpansionSection(
+                  controller: downloadsSectionController,
                   title: 'ダウンロード',
                   icon: Icons.folder_outlined,
                   subtitle: '保存方法・保存先・Google ドライブ',
@@ -4284,8 +4351,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           );
                         },
                       ),
-                      if (const StarSyncGoogleAuthConfig().isAvailable) ...[
+                      if (googleAvailable) ...[
                         DriveDownloadSwitch(
+                          key: driveDownloadsKey,
                           value: _driveDownloadsEnabled,
                           signingIn: _driveSwitchSigningIn,
                           enabled: !starSyncBusy,
@@ -4447,7 +4515,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           if (dialogContext.mounted) setDialogState(() {});
                         },
                       ),
-                      if (const StarSyncGoogleAuthConfig().isAvailable) ...[
+                      if (googleAvailable) ...[
                         const Divider(height: 32),
                         SwitchListTile(
                           title: const Text('履修手帖と学務の照会結果を自動で共有'),
@@ -4484,6 +4552,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ),
                 ),
                 SettingsExpansionSection(
+                  controller: syncSectionController,
                   title: '同期とバックアップ',
                   icon: Icons.sync,
                   subtitle: '端末間の同期・バックアップ',
@@ -4496,6 +4565,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       ),
                       const SizedBox(height: 8),
                         StarSyncSection(
+                          key: syncSettingsKey,
                           status: _starSyncEngine.status,
                           onBusyChanged: (busy) {
                             starSyncBusy = busy;
@@ -4537,7 +4607,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           },
                           collectionEnabled: _starSyncEngine.collectionEnabled,
                           onCollectionChanged: _starSyncEngine.setCollectionEnabled,
-                          googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
+                          googleAvailable: googleAvailable,
                           // With Google sync set up, only its recorded account counts.
                           googleEmail: () =>
                               _starSyncEngine.config != null
@@ -4774,6 +4844,31 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   appBar: AppBar(
                     title: const Text('設定'),
                     actions: [
+                      if (googleAvailable)
+                        FutureBuilder<void>(
+                          future: _driveDownloadsLoad,
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState != ConnectionState.done ||
+                                _starSyncGoogleAuth.currentEmail != null) {
+                              return const SizedBox.shrink();
+                            }
+                            return IconButton(
+                              tooltip: 'Google ログイン・連携',
+                              onPressed: starSyncBusy || _driveSwitchSigningIn
+                                  ? null
+                                  : showGoogleChoices,
+                              // Google Identity's official icon-only buttons.
+                              icon: Image.asset(
+                                Theme.of(context).brightness == Brightness.dark
+                                    ? 'assets/google_signin_dark.png'
+                                    : 'assets/google_signin_light.png',
+                                width: 32,
+                                height: 32,
+                                excludeFromSemantics: true,
+                              ),
+                            );
+                          },
+                        ),
                       TextButton(
                         onPressed: () => Navigator.of(dialogContext).pop(),
                         child: const Text('閉じる'),
@@ -4781,11 +4876,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     ],
                   ),
                   body: SafeArea(
-                    child: ListView.separated(
+                    child: SingleChildScrollView(
                       padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
-                      itemCount: sections.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (context, index) => sections[index],
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (final (index, section) in sections.indexed) ...[
+                            if (index > 0) const Divider(height: 1),
+                            section,
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -4803,6 +4904,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _isSettingsDialogOpen = false;
         });
       }
+      syncSectionController.dispose();
+      downloadsSectionController.dispose();
       messageExcludeKeywordController.dispose();
       messageExcludeKeywordFocusNode.dispose();
       messageNotificationKeywordController.dispose();
