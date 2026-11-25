@@ -4805,7 +4805,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 SettingsExpansionSection(
                   title: 'このアプリについて',
                   icon: Icons.info_outline,
-                  subtitle: 'バージョン・アップデート・不具合や要望の報告',
+                  subtitle: 'バージョン・アップデート',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -4817,22 +4817,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         settings: _appSettings,
                         onFlagChanged: onFlagChanged,
                         onCheckUpdates: _checkForUpdates,
-                      ),
-                      const Divider(height: 32),
-                      AppSupportSection(
-                        onCreateErrorReport: _createErrorReportPackage,
-                        onOpenUrl: (url) async {
-                          await _launchExternalUrl(url);
-                        },
-                        reportEndpoint: reportEndpointUrl == null
-                            ? null
-                            : Uri.parse(reportEndpointUrl!),
-                        collectDiagnostics: () async =>
-                            const JsonEncoder.withIndent('  ').convert(
-                              await _diagnosticPayload(
-                                includeStoredData: false,
-                              ),
-                            ),
                       ),
                     ],
                   ),
@@ -4869,6 +4853,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             );
                           },
                         ),
+                      AppSupportButton(
+                        onCreateErrorReport: _createErrorReportPackage,
+                        onOpenUrl: (url) async {
+                          await _launchExternalUrl(url);
+                        },
+                        reportEndpoint: reportEndpointUrl == null
+                            ? null
+                            : Uri.parse(reportEndpointUrl!),
+                        collectDiagnostics: () async =>
+                            const JsonEncoder.withIndent('  ').convert(
+                              await _diagnosticPayload(
+                                includeStoredData: false,
+                              ),
+                            ),
+                      ),
                       TextButton(
                         onPressed: () => Navigator.of(dialogContext).pop(),
                         child: const Text('閉じる'),

@@ -2053,7 +2053,7 @@ void main() {
             },
           ),
           SettingsActionGroup(actions: [SettingsAction(label: '保存先を確認', icon: Icons.health_and_safety_outlined, run: () async { checked = true; })]),
-          AppSupportSection(
+          AppSupportButton(
             onOpenUrl: (_) async {},
             onCreateErrorReport: () async {
               createdReport = true;
@@ -2084,7 +2084,7 @@ void main() {
     await tester.ensureVisible(find.widgetWithText(OutlinedButton, '保存先を確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存先を確認'));
     await tester.pumpAndSettle();
-    final report = find.widgetWithText(OutlinedButton, '不具合・要望を報告');
+    final report = find.byTooltip('不具合・要望を報告');
     await tester.ensureVisible(report);
     await tester.tap(report);
     await tester.pumpAndSettle();

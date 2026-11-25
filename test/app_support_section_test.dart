@@ -4,7 +4,7 @@ import 'package:morebettergakujo_flutter/src/widgets/app_data_sections.dart';
 import 'package:morebettergakujo_flutter/src/widgets/report_dialog.dart';
 
 void main() {
-  Future<void> showSection(
+  Future<void> showToolbar(
     WidgetTester tester, {
     Uri? endpoint,
     required Future<void> Function(Uri) onOpenUrl,
@@ -17,15 +17,16 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: Padding(
-            padding: const EdgeInsets.all(24),
-            child: AppSupportSection(
-              reportEndpoint: endpoint,
-              loadVersion: () async => '',
-              collectDiagnostics: () async => '{"downloadHistoryCount":2}',
-              onOpenUrl: onOpenUrl,
-              onCreateErrorReport: onCreateErrorReport,
-            ),
+          appBar: AppBar(
+            actions: [
+              AppSupportButton(
+                reportEndpoint: endpoint,
+                loadVersion: () async => '',
+                collectDiagnostics: () async => '{"downloadHistoryCount":2}',
+                onOpenUrl: onOpenUrl,
+                onCreateErrorReport: onCreateErrorReport,
+              ),
+            ],
           ),
         ),
       ),
@@ -38,7 +39,7 @@ void main() {
     (tester) async {
       final opened = <Uri>[];
       var packages = 0;
-      await showSection(
+      await showToolbar(
         tester,
         onOpenUrl: (uri) async => opened.add(uri),
         onCreateErrorReport: () async {
@@ -46,8 +47,8 @@ void main() {
         },
       );
       expect(find.text('アプリから報告する'), findsNothing);
-      expect(find.byType(OutlinedButton), findsOneWidget);
-      await tester.tap(find.text('不具合・要望を報告'));
+      expect(find.byType(IconButton), findsOneWidget);
+      await tester.tap(find.byTooltip('不具合・要望を報告'));
       await tester.pumpAndSettle();
       expect(find.text('アプリから報告する'), findsNothing);
       expect(
@@ -57,7 +58,7 @@ void main() {
       await tester.tap(find.text('エラー報告パッケージ作成'));
       await tester.pumpAndSettle();
       expect(packages, 1);
-      await tester.tap(find.text('不具合・要望を報告'));
+      await tester.tap(find.byTooltip('不具合・要望を報告'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('GitHub で報告（アカウントが必要）'));
       await tester.pumpAndSettle();
@@ -73,14 +74,14 @@ void main() {
     'enabled report opens the in-app dialog without launching a browser',
     (tester) async {
       final opened = <Uri>[];
-      await showSection(
+      await showToolbar(
         tester,
         endpoint: Uri.parse('https://script.google.com/macros/s/test/exec'),
         onOpenUrl: (uri) async => opened.add(uri),
         onCreateErrorReport: () async {},
       );
-      expect(find.byType(OutlinedButton), findsOneWidget);
-      await tester.tap(find.text('不具合・要望を報告'));
+      expect(find.byType(IconButton), findsOneWidget);
+      await tester.tap(find.byTooltip('不具合・要望を報告'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('アプリから報告する'));
       await tester.pumpAndSettle();
@@ -90,7 +91,7 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('閉じる'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('不具合・要望を報告'));
+      await tester.tap(find.byTooltip('不具合・要望を報告'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('GitHub で報告（アカウントが必要）'));
       await tester.pumpAndSettle();

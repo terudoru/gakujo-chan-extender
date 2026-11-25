@@ -275,6 +275,21 @@ void main() {
         await tester.binding.setSurfaceSize(const Size(390, 844));
         await tester.pumpAndSettle();
         await tap(find.byTooltip('設定'));
+        final report = find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byTooltip('不具合・要望を報告'),
+        );
+        expect(report.hitTestable(), findsOneWidget);
+        expect(
+          find.descendant(
+            of: report,
+            matching: find.byIcon(Icons.bug_report_outlined),
+          ),
+          findsOneWidget,
+        );
+        await tap(report);
+        expect(find.text('アプリから報告する').hitTestable(), findsOneWidget);
+        await tap(find.text('キャンセル'));
         final google = find.descendant(
           of: find.byType(AppBar),
           matching: find.byTooltip('Google ログイン・連携'),
@@ -387,8 +402,7 @@ void main() {
           expect(fresh.started.isCompleted, isTrue);
           ModalRoute<dynamic>? cover;
           if (key == _favorites) {
-            await tap(find.text('このアプリについて'));
-            await tap(find.text('不具合・要望を報告'));
+            await tap(find.byTooltip('不具合・要望を報告'));
             await tap(find.text('アプリから報告する'));
             cover = ModalRoute.of(tester.element(find.byType(ReportDialog)))!;
             expect(current.isCurrent, isFalse);

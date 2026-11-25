@@ -70,11 +70,13 @@ class SettingsActionGroup extends StatefulWidget {
     super.key,
     required this.actions,
     this.chooser,
+    this.chooserIconOnly = false,
     this.enabled = true,
-  });
+  }) : assert(!chooserIconOnly || chooser != null);
   final List<SettingsAction> actions;
   final bool enabled;
   final ({String label, IconData icon})? chooser;
+  final bool chooserIconOnly;
   @override
   State<SettingsActionGroup> createState() => _SettingsActionGroupState();
 }
@@ -138,46 +140,66 @@ class _SettingsActionGroupState extends State<SettingsActionGroup> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          if (widget.chooser case final chooser?)
-            OutlinedButton.icon(
-              onPressed: widget.enabled && _activeDataAction == null
-                  ? () => unawaited(_choose(chooser.label, widget.actions))
-                  : null,
-              icon: Icon(chooser.icon),
-              label: Text(chooser.label),
-            )
-          else
-            for (final action in widget.actions)
+  Widget build(BuildContext context) {
+    final chooser = widget.chooser;
+    final onChoose =
+        chooser != null && widget.enabled && _activeDataAction == null
+        ? () => unawaited(_choose(chooser.label, widget.actions))
+        : null;
+    if (widget.chooserIconOnly && chooser != null) {
+      return IconButton(
+        tooltip: chooser.label,
+        onPressed: onChoose,
+        icon: _activeDataAction == null
+            ? Icon(chooser.icon)
+            : SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  semanticsLabel: '「$_activeDataAction」を処理しています',
+                ),
+              ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (chooser != null)
               OutlinedButton.icon(
-                onPressed: _dataAction(action),
-                icon: Icon(action.icon),
-                label: Text(action.label),
-              ),
-        ],
-      ),
-      if (_activeDataAction != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Row(
-            children: [
-              const SizedBox.square(
-                dimension: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text('「$_activeDataAction」を処理しています...')),
-            ],
-          ),
+                onPressed: onChoose,
+                icon: Icon(chooser.icon),
+                label: Text(chooser.label),
+              )
+            else
+              for (final action in widget.actions)
+                OutlinedButton.icon(
+                  onPressed: _dataAction(action),
+                  icon: Icon(action.icon),
+                  label: Text(action.label),
+                ),
+          ],
         ),
-    ],
-  );
+        if (_activeDataAction != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Row(
+              children: [
+                const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Text('「$_activeDataAction」を処理しています...')),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 class AppBackupSection extends StatelessWidget {
@@ -323,8 +345,8 @@ class _AppUpdateSectionState extends State<AppUpdateSection> {
   );
 }
 
-class AppSupportSection extends StatelessWidget {
-  const AppSupportSection({
+class AppSupportButton extends StatelessWidget {
+  const AppSupportButton({
     super.key,
     required this.onCreateErrorReport,
     required this.onOpenUrl,
@@ -340,53 +362,47 @@ class AppSupportSection extends StatelessWidget {
   final ReportClient? reportClient;
   final Future<String> Function()? loadVersion;
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      SettingsActionGroup(
-        chooser: (label: '不具合・要望を報告', icon: Icons.feedback_outlined),
-        actions: [
-          if (reportEndpoint case final endpoint?)
-            SettingsAction(
-              label: 'アプリから報告する',
-              icon: Icons.feedback_outlined,
-              description: 'GitHub アカウントを使わずに送信します。',
-              run: () async {
-                unawaited(
-                  showDialog<void>(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (_) => ReportDialog(
-                      client: reportClient ?? ReportClient(endpoint: endpoint),
-                      collectDiagnostics:
-                          collectDiagnostics ??
-                          () async =>
-                              throw StateError('Diagnostics unavailable'),
-                      onOpenUrl: onOpenUrl,
-                      loadVersion: loadVersion,
-                    ),
-                  ),
-                );
-              },
-            ),
-          SettingsAction(
-            label: 'エラー報告パッケージ作成',
-            icon: Icons.inventory_2_outlined,
-            description: '報告用ファイルを端末に作成します。',
-            run: onCreateErrorReport,
-          ),
-          SettingsAction(
-            label: 'GitHub で報告（アカウントが必要）',
-            icon: Icons.open_in_new,
-            description:
-                'GitHub の投稿はすぐに公開されます。氏名・学籍番号・ログイン情報・学情の画面内容は書かないでください。',
-            run: () => onOpenUrl(
-              Uri.parse(
-                'https://github.com/terudoru/gakujo-chan-extender/issues/new',
+  Widget build(BuildContext context) => SettingsActionGroup(
+    chooser: (label: '不具合・要望を報告', icon: Icons.bug_report_outlined),
+    chooserIconOnly: true,
+    actions: [
+      if (reportEndpoint case final endpoint?)
+        SettingsAction(
+          label: 'アプリから報告する',
+          icon: Icons.feedback_outlined,
+          description: 'GitHub アカウントを使わずに送信します。',
+          run: () async {
+            unawaited(
+              showDialog<void>(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => ReportDialog(
+                  client: reportClient ?? ReportClient(endpoint: endpoint),
+                  collectDiagnostics:
+                      collectDiagnostics ??
+                      () async => throw StateError('Diagnostics unavailable'),
+                  onOpenUrl: onOpenUrl,
+                  loadVersion: loadVersion,
+                ),
               ),
-            ),
+            );
+          },
+        ),
+      SettingsAction(
+        label: 'エラー報告パッケージ作成',
+        icon: Icons.inventory_2_outlined,
+        description: '報告用ファイルを端末に作成します。',
+        run: onCreateErrorReport,
+      ),
+      SettingsAction(
+        label: 'GitHub で報告（アカウントが必要）',
+        icon: Icons.open_in_new,
+        description: 'GitHub の投稿はすぐに公開されます。氏名・学籍番号・ログイン情報・学情の画面内容は書かないでください。',
+        run: () => onOpenUrl(
+          Uri.parse(
+            'https://github.com/terudoru/gakujo-chan-extender/issues/new',
           ),
-        ],
+        ),
       ),
     ],
   );
