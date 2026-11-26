@@ -611,53 +611,31 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     super.dispose();
   }
 
-  /// Loads the given [url].
-  Future<void> loadUrl(String url) async {
+  Future<void> _invokeUnlessDisposed(String method, [Object? arguments]) async {
     if (_isDisposed) {
       return;
     }
-    return _channel.invokeMethod('loadUrl', url);
+    return _channel.invokeMethod(method, arguments);
   }
+
+  /// Loads the given [url].
+  Future<void> loadUrl(String url) => _invokeUnlessDisposed('loadUrl', url);
 
   /// Loads a document from the given string.
-  Future<void> loadStringContent(String content) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('loadStringContent', content);
-  }
+  Future<void> loadStringContent(String content) =>
+      _invokeUnlessDisposed('loadStringContent', content);
 
   /// Reloads the current document.
-  Future<void> reload() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('reload');
-  }
+  Future<void> reload() => _invokeUnlessDisposed('reload');
 
   /// Stops all navigations and pending resource fetches.
-  Future<void> stop() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('stop');
-  }
+  Future<void> stop() => _invokeUnlessDisposed('stop');
 
   /// Navigates the webview to the previous page in the navigation history.
-  Future<void> goBack() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('goBack');
-  }
+  Future<void> goBack() => _invokeUnlessDisposed('goBack');
 
   /// Navigates the webview to the next page in the navigation history.
-  Future<void> goForward() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('goForward');
-  }
+  Future<void> goForward() => _invokeUnlessDisposed('goForward');
 
   /// Adds the provided JavaScript [script] to a list of scripts that should
   /// be run after the global object has been created, but before the HTML
@@ -682,15 +660,8 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   /// scripts.
   ///
   /// See [the WebView2 documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2#removescripttoexecuteondocumentcreated).
-  Future<void> removeScriptToExecuteOnDocumentCreated(ScriptID scriptId) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod(
-      'removeScriptToExecuteOnDocumentCreated',
-      scriptId,
-    );
-  }
+  Future<void> removeScriptToExecuteOnDocumentCreated(ScriptID scriptId) =>
+      _invokeUnlessDisposed('removeScriptToExecuteOnDocumentCreated', scriptId);
 
   /// Runs the JavaScript [script] in the current top-level document rendered
   /// in the webview and returns its JSON-decoded result.
@@ -708,20 +679,12 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   }
 
   /// Posts the given JSON-formatted [message] to the current document.
-  Future<void> postWebMessage(String message) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('postWebMessage', message);
-  }
+  Future<void> postWebMessage(String message) =>
+      _invokeUnlessDisposed('postWebMessage', message);
 
   /// Sets the user agent value.
-  Future<void> setUserAgent(String userAgent) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('setUserAgent', userAgent);
-  }
+  Future<void> setUserAgent(String userAgent) =>
+      _invokeUnlessDisposed('setUserAgent', userAgent);
 
   /// Returns the cookies that match [uri], or all cookies of the browser
   /// profile when [uri] is empty.
@@ -755,37 +718,18 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   }
 
   /// Clears browser cookies.
-  Future<void> clearCookies() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('clearCookies');
-  }
+  Future<void> clearCookies() => _invokeUnlessDisposed('clearCookies');
 
   /// Clears the browser cache.
-  Future<void> clearCache() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('clearCache');
-  }
+  Future<void> clearCache() => _invokeUnlessDisposed('clearCache');
 
   /// Toggles ignoring cache for each request. If [disabled] is `true`, the
   /// cache will not be used.
-  Future<void> setCacheDisabled(bool disabled) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('setCacheDisabled', disabled);
-  }
+  Future<void> setCacheDisabled(bool disabled) =>
+      _invokeUnlessDisposed('setCacheDisabled', disabled);
 
   /// Opens the browser DevTools in a separate window.
-  Future<void> openDevTools() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('openDevTools');
-  }
+  Future<void> openDevTools() => _invokeUnlessDisposed('openDevTools');
 
   /// Sets the background color to the provided [color].
   ///
@@ -801,12 +745,8 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   }
 
   /// Sets the zoom factor.
-  Future<void> setZoomFactor(double zoomFactor) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('setZoomFactor', zoomFactor);
-  }
+  Future<void> setZoomFactor(double zoomFactor) =>
+      _invokeUnlessDisposed('setZoomFactor', zoomFactor);
 
   /// Sets the [WebviewPopupWindowPolicy].
   /// More Better Gakujo patch: cancels main-frame navigations, including
@@ -851,48 +791,26 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   /// Throws a [PlatformException] if WebView2 cannot update the setting.
   ///
   /// See [the WebView2 settings documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2settings?view=webview2-1.0.3967.48).
-  Future<void> setDefaultContextMenusEnabled(bool enabled) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('setDefaultContextMenusEnabled', enabled);
-  }
+  Future<void> setDefaultContextMenusEnabled(bool enabled) =>
+      _invokeUnlessDisposed('setDefaultContextMenusEnabled', enabled);
 
   /// More Better Gakujo patch: enables or disables WebView2 DevTools (F12,
   /// Ctrl+Shift+I and the context menu's Inspect item).
-  Future<void> setDevToolsEnabled(bool enabled) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('setDevToolsEnabled', enabled);
-  }
+  Future<void> setDevToolsEnabled(bool enabled) =>
+      _invokeUnlessDisposed('setDevToolsEnabled', enabled);
 
   /// Routes replayable Gakujo downloads to Dart when enabled. Disabled by
   /// default so WebView2 keeps downloads and shows its own download UI.
-  Future<void> setDownloadInterceptionEnabled(bool enabled) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('setDownloadInterceptionEnabled', enabled);
-  }
+  Future<void> setDownloadInterceptionEnabled(bool enabled) =>
+      _invokeUnlessDisposed('setDownloadInterceptionEnabled', enabled);
 
   /// Suspends the webview to reduce its resource usage.
   ///
   /// See [the WebView2 documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_3#trysuspend).
-  Future<void> suspend() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('suspend');
-  }
+  Future<void> suspend() => _invokeUnlessDisposed('suspend');
 
   /// Resumes a webview suspended with [suspend].
-  Future<void> resume() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('resume');
-  }
+  Future<void> resume() => _invokeUnlessDisposed('resume');
 
   /// Gives the webview native (Win32) keyboard focus.
   ///
@@ -904,12 +822,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   /// text input owns Flutter's primary focus is reverted immediately - the
   /// text input keeps the keyboard. For an intentional handoff, unfocus the
   /// text input first.
-  Future<void> focus() async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('moveFocus');
-  }
+  Future<void> focus() => _invokeUnlessDisposed('moveFocus');
 
   /// Adds a virtual host name mapping, making the directory at [folderPath]
   /// available to web content under `https://<hostName>/`.
@@ -934,21 +847,13 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   /// [addVirtualHostNameMapping].
   ///
   /// See [the WebView2 documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_3#clearvirtualhostnametofoldermapping).
-  Future<void> removeVirtualHostNameMapping(String hostName) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('clearVirtualHostNameMapping', hostName);
-  }
+  Future<void> removeVirtualHostNameMapping(String hostName) =>
+      _invokeUnlessDisposed('clearVirtualHostNameMapping', hostName);
 
   /// Limits the number of frames per second to the given value, or removes
   /// the limit when [maxFps] is 0 or null.
-  Future<void> setFpsLimit([int? maxFps = 0]) async {
-    if (_isDisposed) {
-      return;
-    }
-    return _channel.invokeMethod('setFpsLimit', maxFps);
-  }
+  Future<void> setFpsLimit([int? maxFps = 0]) =>
+      _invokeUnlessDisposed('setFpsLimit', maxFps);
 
   /// Sends a pointer (touch) update.
   Future<void> _setPointerUpdate(
