@@ -18,14 +18,16 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - &checkout_repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "17"
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+      - &setup_cached_flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: '3.47.8'
@@ -47,14 +49,8 @@ jobs:
   apple:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: '3.47.8'
-          cache: true
+      - *checkout_repository
+      - *setup_cached_flutter
       - run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
       - run: bash scripts/test_darwin_secure_storage.sh
       - run: flutter pub get
@@ -117,9 +113,7 @@ jobs:
           apt-get update
           apt-get install -y git curl unzip xz-utils zip ca-certificates jq python3 file clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev liblzma-dev dpkg-dev xvfb xauth
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
+      - *checkout_repository
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
@@ -136,14 +130,8 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: '3.47.8'
-          cache: true
+      - *checkout_repository
+      - *setup_cached_flutter
       - run: flutter pub get
       - run: flutter build windows --debug
 
@@ -152,14 +140,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: '3.47.8'
-          cache: true
+      - *checkout_repository
+      - *setup_cached_flutter
       - run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
       - run: flutter pub get
       - run: flutter build ios --simulator --debug

@@ -93,7 +93,8 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.release_scope == 'all' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - &checkout_release_commit
+        name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -105,7 +106,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Flutter
+      - &setup_flutter
+        name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
@@ -174,7 +176,8 @@ jobs:
             "keyPassword=$ANDROID_KEY_PASSWORD" \
             > "${GITHUB_WORKSPACE}/android/key.properties"
 
-      - name: Check out the Google OAuth helper from the workflow revision
+      - &checkout_oauth_helper
+        name: Check out the Google OAuth helper from the workflow revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -234,12 +237,7 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.verify_release.outputs.platform_commit }}
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: '3.47.8'
-          cache: false
+      - *setup_flutter
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -247,14 +245,7 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Check out the Google OAuth helper from the workflow revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-          path: .release-tools
-          sparse-checkout: scripts/write_google_oauth_defines.py
-          sparse-checkout-cone-mode: false
+      - *checkout_oauth_helper
 
       - name: Prepare Google OAuth defines
         env:
@@ -279,18 +270,9 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.release_scope == 'all' }}
     runs-on: macos-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          ref: ${{ needs.verify_release.outputs.commit }}
+      - *checkout_release_commit
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: '3.47.8'
-          cache: false
+      - *setup_flutter
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -311,16 +293,10 @@ jobs:
           bash scripts/test_darwin_secure_storage.sh
           flutter test --no-pub
 
-      - name: Check out the Google OAuth helper from the workflow revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-          path: .release-tools
-          sparse-checkout: scripts/write_google_oauth_defines.py
-          sparse-checkout-cone-mode: false
+      - *checkout_oauth_helper
 
-      - name: Prepare Google OAuth defines
+      - &prepare_desktop_oauth
+        name: Prepare Google OAuth defines
         env:
           GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_ID }}
           GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET }}
@@ -364,18 +340,9 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.release_scope == 'all' }}
     runs-on: windows-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          ref: ${{ needs.verify_release.outputs.commit }}
+      - *checkout_release_commit
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: '3.47.8'
-          cache: false
+      - *setup_flutter
 
       - name: Install Flutter dependencies
         run: flutter pub get
@@ -439,36 +406,16 @@ jobs:
           apt-get install -y git curl unzip xz-utils zip ca-certificates jq python3 file clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev liblzma-dev dpkg-dev
           git config --global --add safe.directory '*'
 
-      - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          ref: ${{ needs.verify_release.outputs.commit }}
+      - *checkout_release_commit
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: '3.47.8'
-          cache: false
+      - *setup_flutter
 
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Check out the Google OAuth helper from the workflow revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-          path: .release-tools
-          sparse-checkout: scripts/write_google_oauth_defines.py
-          sparse-checkout-cone-mode: false
+      - *checkout_oauth_helper
 
-      - name: Prepare Google OAuth defines
-        env:
-          GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_ID }}
-          GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET }}
-        run: python3 .release-tools/scripts/write_google_oauth_defines.py --platform desktop --out build/google_oauth_defines.json
+      - *prepare_desktop_oauth
 
       - name: Build and package Linux app
         run: |
