@@ -53,6 +53,14 @@ class GakujoAcademicCalendar {
   static const calendarPageUrl =
       'https://www.niigata-u.ac.jp/campus/life/schedule/calendar/';
 
+  static Iterable<DateTime> _civilDates(DateTime first, DateTime last) sync* {
+    for (var offset = 0; ; offset++) {
+      final day = DateTime(first.year, first.month, first.day + offset);
+      if (day.isAfter(last)) return;
+      yield day;
+    }
+  }
+
   static final List<GakujoAcademicTerm> officialTerms = [
     GakujoAcademicTerm(
       academicYear: 2026,
@@ -62,17 +70,8 @@ class GakujoAcademicCalendar {
       sourceUrl: calendarPageUrl,
       noClassDates: [
         DateTime(2026, 4, 29),
-        DateTime(2026, 5, 4),
-        DateTime(2026, 5, 5),
-        DateTime(2026, 5, 6),
-        DateTime(2026, 6, 1),
-        DateTime(2026, 6, 2),
-        DateTime(2026, 6, 3),
-        DateTime(2026, 6, 4),
-        DateTime(2026, 6, 5),
-        DateTime(2026, 6, 6),
-        DateTime(2026, 6, 7),
-        DateTime(2026, 6, 8),
+        ..._civilDates(DateTime(2026, 5, 4), DateTime(2026, 5, 6)),
+        ..._civilDates(DateTime(2026, 6, 1), DateTime(2026, 6, 8)),
       ],
       classDaySwaps: [
         GakujoClassDaySwap(date: DateTime(2026, 4, 27), weekday: 3),
@@ -88,13 +87,7 @@ class GakujoAcademicCalendar {
       sourceUrl: calendarPageUrl,
       noClassDates: [
         DateTime(2026, 7, 20),
-        DateTime(2026, 7, 30),
-        DateTime(2026, 7, 31),
-        DateTime(2026, 8, 1),
-        DateTime(2026, 8, 2),
-        DateTime(2026, 8, 3),
-        DateTime(2026, 8, 4),
-        DateTime(2026, 8, 5),
+        ..._civilDates(DateTime(2026, 7, 30), DateTime(2026, 8, 5)),
       ],
       classDaySwaps: [
         GakujoClassDaySwap(date: DateTime(2026, 7, 22), weekday: 1),
@@ -110,13 +103,7 @@ class GakujoAcademicCalendar {
         DateTime(2026, 10, 12),
         DateTime(2026, 11, 3),
         DateTime(2026, 11, 23),
-        DateTime(2026, 11, 25),
-        DateTime(2026, 11, 26),
-        DateTime(2026, 11, 27),
-        DateTime(2026, 11, 28),
-        DateTime(2026, 11, 29),
-        DateTime(2026, 11, 30),
-        DateTime(2026, 12, 1),
+        ..._civilDates(DateTime(2026, 11, 25), DateTime(2026, 12, 1)),
       ],
       classDaySwaps: [
         GakujoClassDaySwap(date: DateTime(2026, 10, 13), weekday: 1),
@@ -130,27 +117,11 @@ class GakujoAcademicCalendar {
       end: DateTime(2027, 2, 12),
       sourceUrl: calendarPageUrl,
       noClassDates: [
-        DateTime(2026, 12, 28),
-        DateTime(2026, 12, 29),
-        DateTime(2026, 12, 30),
-        DateTime(2026, 12, 31),
-        DateTime(2027, 1, 1),
-        DateTime(2027, 1, 2),
-        DateTime(2027, 1, 3),
-        DateTime(2027, 1, 4),
-        DateTime(2027, 1, 5),
-        DateTime(2027, 1, 6),
+        ..._civilDates(DateTime(2026, 12, 28), DateTime(2027, 1, 6)),
         DateTime(2027, 1, 11),
-        DateTime(2027, 1, 15),
-        DateTime(2027, 1, 16),
-        DateTime(2027, 1, 17),
-        DateTime(2027, 1, 18),
+        ..._civilDates(DateTime(2027, 1, 15), DateTime(2027, 1, 18)),
         DateTime(2027, 2, 4),
-        DateTime(2027, 2, 8),
-        DateTime(2027, 2, 9),
-        DateTime(2027, 2, 10),
-        DateTime(2027, 2, 11),
-        DateTime(2027, 2, 12),
+        ..._civilDates(DateTime(2027, 2, 8), DateTime(2027, 2, 12)),
       ],
       classDaySwaps: [
         GakujoClassDaySwap(date: DateTime(2027, 1, 14), weekday: 1),
@@ -167,17 +138,8 @@ class GakujoAcademicCalendar {
       sourceUrl: calendarPageUrl,
       noClassDates: [
         DateTime(2027, 4, 29),
-        DateTime(2027, 5, 3),
-        DateTime(2027, 5, 4),
-        DateTime(2027, 5, 5),
-        DateTime(2027, 6, 1),
-        DateTime(2027, 6, 2),
-        DateTime(2027, 6, 3),
-        DateTime(2027, 6, 4),
-        DateTime(2027, 6, 5),
-        DateTime(2027, 6, 6),
-        DateTime(2027, 6, 7),
-        DateTime(2027, 6, 8),
+        ..._civilDates(DateTime(2027, 5, 3), DateTime(2027, 5, 5)),
+        ..._civilDates(DateTime(2027, 6, 1), DateTime(2027, 6, 8)),
       ],
       classDaySwaps: [
         GakujoClassDaySwap(date: DateTime(2027, 5, 7), weekday: 3),
@@ -191,13 +153,7 @@ class GakujoAcademicCalendar {
       sourceUrl: calendarPageUrl,
       noClassDates: [
         DateTime(2027, 7, 19),
-        DateTime(2027, 7, 30),
-        DateTime(2027, 7, 31),
-        DateTime(2027, 8, 1),
-        DateTime(2027, 8, 2),
-        DateTime(2027, 8, 3),
-        DateTime(2027, 8, 4),
-        DateTime(2027, 8, 5),
+        ..._civilDates(DateTime(2027, 7, 30), DateTime(2027, 8, 5)),
       ],
       classDaySwaps: [
         GakujoClassDaySwap(date: DateTime(2027, 7, 22), weekday: 1),
@@ -213,13 +169,7 @@ class GakujoAcademicCalendar {
         DateTime(2027, 10, 11),
         DateTime(2027, 11, 3),
         DateTime(2027, 11, 23),
-        DateTime(2027, 11, 25),
-        DateTime(2027, 11, 26),
-        DateTime(2027, 11, 27),
-        DateTime(2027, 11, 28),
-        DateTime(2027, 11, 29),
-        DateTime(2027, 11, 30),
-        DateTime(2027, 12, 1),
+        ..._civilDates(DateTime(2027, 11, 25), DateTime(2027, 12, 1)),
       ],
     ),
     GakujoAcademicTerm(
@@ -229,29 +179,11 @@ class GakujoAcademicCalendar {
       end: DateTime(2028, 2, 14),
       sourceUrl: calendarPageUrl,
       noClassDates: [
-        DateTime(2027, 12, 28),
-        DateTime(2027, 12, 29),
-        DateTime(2027, 12, 30),
-        DateTime(2027, 12, 31),
-        DateTime(2028, 1, 1),
-        DateTime(2028, 1, 2),
-        DateTime(2028, 1, 3),
-        DateTime(2028, 1, 4),
-        DateTime(2028, 1, 5),
-        DateTime(2028, 1, 6),
+        ..._civilDates(DateTime(2027, 12, 28), DateTime(2028, 1, 6)),
         DateTime(2028, 1, 10),
-        DateTime(2028, 1, 14),
-        DateTime(2028, 1, 15),
-        DateTime(2028, 1, 16),
-        DateTime(2028, 1, 17),
+        ..._civilDates(DateTime(2028, 1, 14), DateTime(2028, 1, 17)),
         DateTime(2028, 2, 4),
-        DateTime(2028, 2, 8),
-        DateTime(2028, 2, 9),
-        DateTime(2028, 2, 10),
-        DateTime(2028, 2, 11),
-        DateTime(2028, 2, 12),
-        DateTime(2028, 2, 13),
-        DateTime(2028, 2, 14),
+        ..._civilDates(DateTime(2028, 2, 8), DateTime(2028, 2, 14)),
       ],
     ),
   ];
