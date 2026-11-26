@@ -6,24 +6,46 @@ const String gakujoCalendarScheduleMonthViewActivationJs = r'''
 (function() {
 "use strict";
 (() => {
+  // web_scripts/src/shared/calendar_schedule_dom.ts
+  function textOf(node) {
+    if (!node) {
+      return "";
+    }
+    return [
+      node.innerText || node.textContent || "",
+      node.value || "",
+      node.getAttribute && node.getAttribute("title") || "",
+      node.getAttribute && node.getAttribute("onclick") || "",
+      node.getAttribute && node.getAttribute("href") || ""
+    ].join(" ").replace(/\s+/g, " ").trim();
+  }
+  function calendarControls(doc) {
+    return Array.prototype.slice.call(doc.querySelectorAll("a,button,input,[onclick]"));
+  }
+  function findInCalendarFrames(win, inspect) {
+    try {
+      if (!win || !win.document) {
+        return null;
+      }
+      const result = inspect(win.document);
+      if (result) {
+        return result;
+      }
+      for (let i = 0; i < win.frames.length; i += 1) {
+        const found = findInCalendarFrames(win.frames[i], inspect);
+        if (found) {
+          return found;
+        }
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+
   // web_scripts/src/calendar_schedule_month_view_activation/main.ts
   function calendarScheduleMonthViewActivation() {
-    function textOf(node) {
-      if (!node) {
-        return "";
-      }
-      return [
-        node.innerText || node.textContent || "",
-        node.value || "",
-        node.getAttribute && node.getAttribute("title") || "",
-        node.getAttribute && node.getAttribute("onclick") || "",
-        node.getAttribute && node.getAttribute("href") || ""
-      ].join(" ").replace(/\s+/g, " ").trim();
-    }
     function inspect(doc) {
-      var controls = Array.prototype.slice.call(
-        doc.querySelectorAll("a,button,input,[onclick]")
-      );
+      var controls = calendarControls(doc);
       var monthControl = null;
       var monthLabel = "";
       for (var i = 0; i < controls.length; i += 1) {
@@ -61,23 +83,7 @@ const String gakujoCalendarScheduleMonthViewActivationJs = r'''
         };
       }
     }
-    function collect(win) {
-      try {
-        var found = inspect(win.document);
-        if (found) {
-          return found;
-        }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          found = collect(win.frames[i]);
-          if (found) {
-            return found;
-          }
-        }
-      } catch (e) {
-      }
-      return null;
-    }
-    return JSON.stringify(collect(window) || {
+    return JSON.stringify(findInCalendarFrames(window, inspect) || {
       status: "not_found",
       label: "",
       url: ""

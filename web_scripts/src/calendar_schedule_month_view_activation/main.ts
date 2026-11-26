@@ -1,21 +1,8 @@
-export {};
+import { calendarControls, findInCalendarFrames, textOf } from '../shared/calendar_schedule_dom.js';
+
 function calendarScheduleMonthViewActivation(): string {
-  function textOf(node: HTMLInputElement) {
-    if (!node) {
-      return '';
-    }
-    return [
-      node.innerText || node.textContent || '',
-      node.value || '',
-      node.getAttribute && node.getAttribute('title') || '',
-      node.getAttribute && node.getAttribute('onclick') || '',
-      node.getAttribute && node.getAttribute('href') || ''
-    ].join(' ').replace(/\s+/g, ' ').trim();
-  }
   function inspect(doc: Document) {
-    var controls = Array.prototype.slice.call(
-      doc.querySelectorAll('a,button,input,[onclick]')
-    );
+    var controls = calendarControls(doc);
     var monthControl = null;
     var monthLabel = '';
     for (var i = 0; i < controls.length; i += 1) {
@@ -56,22 +43,7 @@ function calendarScheduleMonthViewActivation(): string {
       };
     }
   }
-  function collect(win: Window): {status: string; label: string; url: string; message?: string} | null {
-    try {
-      var found = inspect(win.document);
-      if (found) {
-        return found;
-      }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        found = collect(win.frames[i]);
-        if (found) {
-          return found;
-        }
-      }
-    } catch (e) {}
-    return null;
-  }
-  return JSON.stringify(collect(window) || {
+  return JSON.stringify(findInCalendarFrames(window, inspect) || {
     status: 'not_found',
     label: '',
     url: ''
