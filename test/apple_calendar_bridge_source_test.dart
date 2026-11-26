@@ -3,10 +3,24 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  for (final path in [
-    'ios/Runner/AppDelegate.swift',
-    'macos/Runner/AppDelegate.swift',
-  ]) {
+  const path = 'darwin/AppleCalendarBridge.swift';
+  group('Apple calendar bridge', () {
+    for (final platform in ['ios', 'macos']) {
+      test('$platform includes and registers the shared calendar bridge', () {
+        final project = File(
+          '$platform/Runner.xcodeproj/project.pbxproj',
+        ).readAsStringSync();
+        expect(project, contains('path = ../$path;'));
+        expect(
+          RegExp(r'AppleCalendarBridge.swift in Sources').allMatches(project),
+          hasLength(2),
+        );
+        final delegate = File('$platform/Runner/AppDelegate.swift').readAsStringSync();
+        expect(delegate, contains('calendarBridge = AppleCalendarBridge()'));
+        expect(delegate, contains('calendarBridge.register(messenger:'));
+      });
+    }
+
     group(path, () {
       late String source;
 
@@ -150,7 +164,7 @@ void main() {
         expect(source, contains('? Self.validationUidNamespace'));
       });
     });
-  }
+  });
 }
 
 String _method(String source, String name) {

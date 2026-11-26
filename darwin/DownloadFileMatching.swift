@@ -54,3 +54,41 @@ private func filesHaveSameContent(_ firstURL: URL, _ secondURL: URL) throws -> B
     }
   }
 }
+
+func uniqueDownloadFileName(desiredName: String, existingLowercaseNames: Set<String>) -> String {
+  if !existingLowercaseNames.contains(desiredName.lowercased()) {
+    return desiredName
+  }
+
+  let nsName = desiredName as NSString
+  let ext = nsName.pathExtension
+  let base = ext.isEmpty ? desiredName : nsName.deletingPathExtension
+  var index = 1
+  while true {
+    let candidate = ext.isEmpty ? "\(base) (\(index))" : "\(base) (\(index)).\(ext)"
+    if !existingLowercaseNames.contains(candidate.lowercased()) {
+      return candidate
+    }
+    index += 1
+  }
+}
+
+func sanitizeDownloadName(_ raw: String?) -> String {
+  let invalid = CharacterSet(charactersIn: "\\/:*?\"<>|")
+    .union(.controlCharacters)
+  let trimmingCharacters = CharacterSet.whitespacesAndNewlines
+    .union(CharacterSet(charactersIn: "."))
+  let cleaned = (raw ?? "")
+    .components(separatedBy: invalid)
+    .joined()
+    .replacingOccurrences(of: "\\.{2,}", with: ".", options: .regularExpression)
+    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    .trimmingCharacters(in: trimmingCharacters)
+  return cleaned == "." || cleaned == ".." ? "" : cleaned
+}
+
+func isDownloadPathWithinRoot(_ url: URL, of root: URL) -> Bool {
+  let rootPath = root.standardizedFileURL.path
+  let path = url.standardizedFileURL.path
+  return path == rootPath || path.hasPrefix(rootPath + "/")
+}
