@@ -7,6 +7,7 @@ import 'download_file_name_policy.dart';
 import 'gakujo_download_request.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
+import 'stored_json.dart';
 
 class GakujoDownloadHistoryEntry {
   const GakujoDownloadHistoryEntry({
@@ -150,68 +151,37 @@ class GakujoDownloadHistoryStore {
     return _enqueue(_load);
   }
 
-  Future<List<GakujoDownloadHistoryEntry>> _load() async {
-    final raw = await _secureStorage.read(key: _historyKey);
-    if (raw == null || raw.trim().isEmpty) {
-      return const [];
-    }
-
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List<dynamic>) {
-        return const [];
-      }
-      final entries = <GakujoDownloadHistoryEntry>[];
-      for (final item in decoded.whereType<Map<dynamic, dynamic>>()) {
-        try {
-          final entry = GakujoDownloadHistoryEntry.fromJson(item);
-          if (entry.fileName.trim().isNotEmpty && _isRecentHistory(entry)) {
-            entries.add(entry);
-          }
-        } on Object {
-          // Ignore malformed legacy entries so one bad item does not hide all data.
-        }
-      }
-      entries.sort((a, b) => b.savedAt.compareTo(a.savedAt));
-      return entries;
-    } on Object {
-      return const [];
-    }
-  }
+  Future<List<GakujoDownloadHistoryEntry>> _load() => _loadEntries(
+        _historyKey,
+        GakujoDownloadHistoryEntry.fromJson,
+        (entry) => entry.savedAt,
+        _retainsHistoryEntry,
+      );
 
   Future<List<GakujoFailedDownloadEntry>> loadFailedDownloads() {
     return _enqueue(_loadFailedDownloads);
   }
 
-  Future<List<GakujoFailedDownloadEntry>> _loadFailedDownloads() async {
-    final raw = await _secureStorage.read(key: _failedDownloadsKey);
-    if (raw == null || raw.trim().isEmpty) {
-      return const [];
-    }
+  Future<List<GakujoFailedDownloadEntry>> _loadFailedDownloads() => _loadEntries(
+        _failedDownloadsKey,
+        GakujoFailedDownloadEntry.fromJson,
+        (entry) => entry.failedAt,
+        _retainsFailedEntry,
+      );
 
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List<dynamic>) {
-        return const [];
-      }
-      final entries = <GakujoFailedDownloadEntry>[];
-      for (final item in decoded.whereType<Map<dynamic, dynamic>>()) {
-        try {
-          final entry = GakujoFailedDownloadEntry.fromJson(item);
-          if (entry.id.trim().isNotEmpty &&
-              entry.request.url.trim().isNotEmpty &&
-              _isRecentFailedDownload(entry)) {
-            entries.add(entry);
-          }
-        } on Object {
-          // Ignore malformed legacy entries so one bad item does not hide all data.
-        }
-      }
-      entries.sort((a, b) => b.failedAt.compareTo(a.failedAt));
-      return entries;
-    } on Object {
-      return const [];
-    }
+  Future<List<T>> _loadEntries<T extends Object>(
+    String key,
+    T Function(Map<dynamic, dynamic> json) decodeEntry,
+    DateTime Function(T) timestamp,
+    bool Function(T) retain,
+  ) async {
+    final raw = await _secureStorage.read(key: key);
+    return decodeStoredJsonList(
+      raw,
+      decodeEntry,
+      retain: retain,
+      compare: (a, b) => timestamp(b).compareTo(timestamp(a)),
+    );
   }
 
   Future<void> compact() {
@@ -236,11 +206,8 @@ class GakujoDownloadHistoryStore {
   }
 
   bool retainsBackupEntry(Object entry) => switch (entry) {
-        final GakujoDownloadHistoryEntry value =>
-          value.fileName.trim().isNotEmpty && _isRecentHistory(value),
-        final GakujoFailedDownloadEntry value => value.id.trim().isNotEmpty &&
-            value.request.url.trim().isNotEmpty &&
-            _isRecentFailedDownload(value),
+        final GakujoDownloadHistoryEntry value => _retainsHistoryEntry(value),
+        final GakujoFailedDownloadEntry value => _retainsFailedEntry(value),
         _ => false,
       };
 
@@ -248,22 +215,15 @@ class GakujoDownloadHistoryStore {
     return _enqueue(() => _replaceHistory(entries));
   }
 
-  Future<void> _replaceHistory(List<GakujoDownloadHistoryEntry> entries) {
-    final compacted = entries
-        .where(
-          (entry) =>
-              entry.fileName.trim().isNotEmpty && _isRecentHistory(entry),
-        )
-        .toList();
-    compacted.sort((a, b) => b.savedAt.compareTo(a.savedAt));
-    final limited = compacted.take(_maxEntries).toList();
-    return _secureStorage.write(
-      key: _historyKey,
-      value: jsonEncode(
-        limited.map((entry) => entry.toJson()).toList(),
-      ),
-    );
-  }
+  Future<void> _replaceHistory(List<GakujoDownloadHistoryEntry> entries) =>
+      _writeEntries(
+        entries,
+        key: _historyKey,
+        limit: _maxEntries,
+        timestamp: (entry) => entry.savedAt,
+        retain: _retainsHistoryEntry,
+        encodeEntry: (entry) => entry.toJson(),
+      );
 
   Future<void> clear() {
     return _enqueue(() => _secureStorage.delete(key: _historyKey));
@@ -329,31 +289,40 @@ class GakujoDownloadHistoryStore {
 
   Future<void> _writeFailedDownloads(
     List<GakujoFailedDownloadEntry> entries,
-  ) {
-    final compacted = entries
-        .where(
-          (entry) =>
-              entry.id.trim().isNotEmpty &&
-              entry.request.url.trim().isNotEmpty &&
-              _isRecentFailedDownload(entry),
-        )
-        .toList();
-    compacted.sort((a, b) => b.failedAt.compareTo(a.failedAt));
-    final limited = compacted.take(_maxFailedEntries).toList();
+  ) =>
+      _writeEntries(
+        entries,
+        key: _failedDownloadsKey,
+        limit: _maxFailedEntries,
+        timestamp: (entry) => entry.failedAt,
+        retain: _retainsFailedEntry,
+        encodeEntry: (entry) => entry.toJson(),
+      );
+
+  Future<void> _writeEntries<T extends Object>(
+    List<T> entries, {
+    required String key,
+    required int limit,
+    required DateTime Function(T) timestamp,
+    required bool Function(T) retain,
+    required Map<String, Object?> Function(T) encodeEntry,
+  }) {
+    final compacted = entries.where(retain).toList();
+    compacted.sort((a, b) => timestamp(b).compareTo(timestamp(a)));
     return _secureStorage.write(
-      key: _failedDownloadsKey,
-      value: jsonEncode(limited.map((entry) => entry.toJson()).toList()),
+      key: key,
+      value: jsonEncode(compacted.take(limit).map(encodeEntry).toList()),
     );
   }
 
-  bool _isRecentHistory(GakujoDownloadHistoryEntry entry) {
-    return entry.savedAt.isAfter(DateTime.now().subtract(_historyRetention));
-  }
+  bool _retainsHistoryEntry(GakujoDownloadHistoryEntry entry) =>
+      entry.fileName.trim().isNotEmpty &&
+      entry.savedAt.isAfter(DateTime.now().subtract(_historyRetention));
 
-  bool _isRecentFailedDownload(GakujoFailedDownloadEntry entry) {
-    return entry.failedAt
-        .isAfter(DateTime.now().subtract(_failedDownloadRetention));
-  }
+  bool _retainsFailedEntry(GakujoFailedDownloadEntry entry) =>
+      entry.id.trim().isNotEmpty &&
+      entry.request.url.trim().isNotEmpty &&
+      entry.failedAt.isAfter(DateTime.now().subtract(_failedDownloadRetention));
 
   String _failedRequestKey(GakujoDownloadRequest request) {
     return jsonEncode([

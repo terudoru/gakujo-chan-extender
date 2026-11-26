@@ -13,6 +13,30 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('normal storage ignores backup retention overrides and malformed records',
+      () async {
+    final now = DateTime.now().toIso8601String();
+    FlutterSecureStorage.setMockInitialValues({
+      'more_better_gakujo_download_history': jsonEncode([
+        {'fileName': 'invalid.pdf', 'savedAt': 'not a date'},
+        {'fileName': 'kept.pdf', 'savedAt': now},
+      ]),
+      'more_better_gakujo_failed_downloads': jsonEncode([
+        {'id': 'unusable', 'request': [], 'failedAt': now},
+        {
+          'id': 'kept',
+          'request': {'url': 'https://example.invalid/download'},
+          'failedAt': now,
+        },
+        false,
+      ]),
+    });
+    final store = _ExcludeEveryBackupEntryStore();
+    await store.compact();
+    expect((await store.load()).single.fileName, 'kept.pdf');
+    expect((await store.loadFailedDownloads()).single.id, 'kept');
+  });
+
   for (final course in ['', ' \t ']) {
     final label = course.isEmpty ? 'empty' : 'whitespace';
     test('blank-course retries match after reload ($label)', () async {
@@ -590,6 +614,11 @@ void main() {
     final entries = await store.load();
     expect(entries.map((entry) => entry.fileName), {'資料A.pdf', '資料B.pdf'});
   });
+}
+
+class _ExcludeEveryBackupEntryStore extends GakujoDownloadHistoryStore {
+  @override
+  bool retainsBackupEntry(Object entry) => false;
 }
 
 class _DelayedMemorySecureStorage extends FlutterSecureStorage {

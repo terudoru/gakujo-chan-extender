@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../secure_storage_transaction.dart';
+import '../stored_json.dart';
 import 'star_sync_document.dart';
 
 typedef StarSyncLocalCommit = Future<bool> Function(
@@ -83,16 +84,7 @@ abstract class StarSyncCollection {
   Comparable Function(Object? value)? get order;
 }
 
-Object? _canonical(Object? value) {
-  if (value is Map) {
-    final keys = value.keys.cast<String>().toList()..sort();
-    return {for (final key in keys) key: _canonical(value[key])};
-  }
-  if (value is List) return value.map(_canonical).toList();
-  return value;
-}
-
-String starSyncCanonicalJson(Object? value) => jsonEncode(_canonical(value));
+String starSyncCanonicalJson(Object? value) => canonicalJson(value);
 String starSyncValueHash(Object? value) =>
     sha256.convert(utf8.encode(starSyncCanonicalJson(value))).toString();
 

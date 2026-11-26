@@ -8,6 +8,7 @@ import 'gakujo_assignment.dart';
 import 'gakujo_dated_activity.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
+import 'stored_json.dart';
 
 class GakujoDeadlineEntry {
   const GakujoDeadlineEntry({
@@ -644,8 +645,8 @@ class GakujoActivityStore {
     return _enqueue(() async {
       final local = await _readNotifiedDeadlineKeysWithTimes();
       final current = {for (final e in local.entries) e.key: e.value.toUtc().toIso8601String()};
-      if (_syncCanonicalJson(current) != _syncCanonicalJson(basedOn)) return false;
-      if (_syncCanonicalJson(current) != _syncCanonicalJson({
+      if (canonicalJson(current) != canonicalJson(basedOn)) return false;
+      if (canonicalJson(current) != canonicalJson({
         for (final e in entries.entries) e.key: e.value.toUtc().toIso8601String(),
       })) {
         await _writeNotifiedDeadlineKeysWithTimes(entries, beforeWrite: beforeWrite);
@@ -699,29 +700,17 @@ class GakujoActivityStore {
         for (final page in local.value)
           page.durableUrl: {'title': page.title, 'addedAt': page.addedAt.toIso8601String()},
       };
-      if (_syncCanonicalJson(current) != _syncCanonicalJson(basedOn)) return false;
+      if (canonicalJson(current) != canonicalJson(basedOn)) return false;
       final next = {
         for (final page in entries)
           page.durableUrl: {'title': page.title, 'addedAt': page.addedAt.toIso8601String()},
       };
-      if (_syncCanonicalJson(current) != _syncCanonicalJson(next)) {
+      if (canonicalJson(current) != canonicalJson(next)) {
         beforeWrite?.call();
         await _replaceFavorites(entries);
       }
       return true;
     });
-  }
-
-  String _syncCanonicalJson(Object? value) {
-    Object? canonical(Object? item) {
-      if (item is Map) {
-        final keys = item.keys.cast<String>().toList()..sort();
-        return {for (final key in keys) key: canonical(item[key])};
-      }
-      if (item is List) return item.map(canonical).toList();
-      return item;
-    }
-    return jsonEncode(canonical(value));
   }
 
   Future<List<GakujoFavoritePage>> loadFavorites() {
@@ -1490,32 +1479,6 @@ class GakujoActivityStore {
     return parsed.subtract(const Duration(hours: 9));
   }
 
-  List<T> _decodeList<T>(
-    String? raw,
-    T Function(Map<dynamic, dynamic>) fromJson,
-  ) {
-    if (raw == null || raw.trim().isEmpty) {
-      return const [];
-    }
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List<dynamic>) {
-        return const [];
-      }
-      final entries = <T>[];
-      for (final item in decoded.whereType<Map<dynamic, dynamic>>()) {
-        try {
-          entries.add(fromJson(item));
-        } on Object {
-          // Ignore malformed legacy entries so one bad item does not hide all data.
-        }
-      }
-      return entries;
-    } on Object {
-      return const [];
-    }
-  }
-
   Future<_StorageReadResult<List<T>>> _readList<T extends Object>({
     required String key,
     required T Function(Map<dynamic, dynamic>) fromJson,
@@ -1527,7 +1490,8 @@ class GakujoActivityStore {
     if (!rawRead.isSuccessful) {
       return _StorageReadResult.failure(<T>[]);
     }
-    final values = _decodeList(rawRead.value, fromJson).where(retain).toList()
+    final values =
+        decodeStoredJsonList(rawRead.value, fromJson).where(retain).toList()
       ..sort(compare);
     return _StorageReadResult.success(values.take(limit).toList());
   }
