@@ -1,12 +1,7 @@
 // Focused Playwright browser verification for ProfileSettings yearAttendanceMonths,
 // assessmentDate leap-day validation, yearOfStudy > 12, and diff-based survival of competing updates.
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { createServer } from "vite";
-import { chromium } from "playwright-core";
-
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+import { withBrowserHarness } from "./browser-harness.mjs";
 
 const HARNESS_HTML = `<!doctype html>
 <html lang="ja">
@@ -106,59 +101,14 @@ function Harness() {
 createRoot(document.getElementById("root")).render(<Harness />);
 `;
 
-const virtualPlugin = {
+await withBrowserHarness({
   name: "profile-diff-harness",
-  configureServer(server) {
-    server.middlewares.use((req, res, next) => {
-      if (req.url === "/profile-diff.html") {
-        server
-          .transformIndexHtml("/profile-diff.html", HARNESS_HTML)
-          .then((html) => {
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "text/html; charset=utf-8");
-            res.end(html);
-          })
-          .catch(next);
-        return;
-      }
-      next();
-    });
-  },
-  resolveId(id) {
-    if (id === "/@profile-diff-harness.jsx") return id;
-    return null;
-  },
-  load(id) {
-    if (id === "/@profile-diff-harness.jsx") return HARNESS_ENTRY;
-    return null;
-  },
-};
-
-const viteServer = await createServer({
-  root,
-  server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-  logLevel: "error",
-  plugins: [virtualPlugin],
-});
-await viteServer.listen();
-const address = viteServer.httpServer.address();
-const url = `http://127.0.0.1:${address.port}/profile-diff.html`;
-
-let browser;
-try {
-  browser = await chromium.launch({
-    channel: process.env.CHROME_CHANNEL ?? "chrome",
-    headless: true,
-    chromiumSandbox: true,
-  });
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 930 },
-  });
-  const page = await context.newPage();
-  page.setDefaultTimeout(10000);
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-
+  pagePath: "/profile-diff.html",
+  entryPath: "/@profile-diff-harness.jsx",
+  html: HARNESS_HTML,
+  entry: HARNESS_ENTRY,
+  viewport: { width: 1440, height: 930 },
+}, async ({ page, url, errors }) => {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   const dialog = page.getByRole("dialog", { name: "所属・適用便覧" });
   await dialog.waitFor({ timeout: 30000 });
@@ -220,7 +170,4 @@ try {
   console.log(
     "ProfileSettings browser check passed: leap-day validation, yearOfStudy > 12, true zero vs empty, and competing sync survival across years and owned fields on desktop and mobile.",
   );
-} finally {
-  await browser?.close();
-  await viteServer.close();
-}
+});

@@ -1,11 +1,6 @@
 // Focused standalone browser verification for SemesterCreditSplit in Meta Astryx Neutral.
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { createServer } from "vite";
-import { chromium } from "playwright-core";
-
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+import { withBrowserHarness } from "./browser-harness.mjs";
 
 const HARNESS_HTML = `<!doctype html>
 <html lang="ja">
@@ -53,10 +48,14 @@ function Harness() {
         ? { ...splits[courseKey] }
         : undefined;
 
-  async function handleSave(splitOrNull) {
-    callsRef.current.push({ course: course.code, arg: splitOrNull });
+  async function handleSave(splitOrNull, original) {
+    callsRef.current.push({ course: course.code, arg: splitOrNull, original });
     window.__SPLIT_CALLS__ = [...callsRef.current];
+    if (nextResult === "defer") {
+      await new Promise((resolve) => { window.__FINISH_SPLIT__ = resolve; });
+    }
     await new Promise((r) => setTimeout(r, 30));
+    if (nextResult === "throw") throw null;
     if (!nextResult) {
       setError("別の操作で更新されました。もう一度確認してください。");
       return false;
@@ -102,60 +101,15 @@ function Harness() {
 createRoot(document.getElementById("root")).render(<Harness />);
 `;
 
-const virtualPlugin = {
+await withBrowserHarness({
   name: "semester-split-harness",
-  configureServer(server) {
-    server.middlewares.use((req, res, next) => {
-      if (req.url === "/semester-split.html") {
-        server
-          .transformIndexHtml("/semester-split.html", HARNESS_HTML)
-          .then((html) => {
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "text/html; charset=utf-8");
-            res.end(html);
-          })
-          .catch(next);
-        return;
-      }
-      next();
-    });
-  },
-  resolveId(id) {
-    if (id === "/@semester-split-harness.jsx") return id;
-    return null;
-  },
-  load(id) {
-    if (id === "/@semester-split-harness.jsx") return HARNESS_ENTRY;
-    return null;
-  },
-};
-
-const viteServer = await createServer({
-  root,
-  server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
+  pagePath: "/semester-split.html",
+  entryPath: "/@semester-split-harness.jsx",
+  html: HARNESS_HTML,
+  entry: HARNESS_ENTRY,
+  viewport: { width: 1440, height: 930 },
   optimizeDeps: { entries: [] },
-  logLevel: "error",
-  plugins: [virtualPlugin],
-});
-await viteServer.listen();
-const address = viteServer.httpServer.address();
-const url = `http://127.0.0.1:${address.port}/semester-split.html`;
-
-let browser;
-try {
-  browser = await chromium.launch({
-    channel: process.env.CHROME_CHANNEL ?? "chrome",
-    headless: true,
-    chromiumSandbox: true,
-  });
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 930 },
-  });
-  const page = await context.newPage();
-  page.setDefaultTimeout(10000);
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-
+}, async ({ page, url, errors }) => {
   await page.goto(url, { waitUntil: "commit", timeout: 45000 });
   const dialog = page.getByRole("dialog", { name: "授業の詳細" });
   await dialog.waitFor({ timeout: 45000 });
@@ -257,9 +211,34 @@ try {
   assert.equal(await secondInput.inputValue(), "4");
   assert.equal(await dialog.getByRole("alert").count(), 0);
 
+  // Rejected commits preserve inputs and pass the saved baseline on both actions.
+  await page.evaluate(() => window.__SPLIT_HARNESS__.setNextResult("throw"));
+  await clearBtn.click();
+  await dialog.getByRole("alert").filter({ hasText: "クリアできませんでした。" }).waitFor();
+  assert.equal(await firstInput.inputValue(), "0");
+  assert.equal(await secondInput.inputValue(), "4");
+  await firstInput.fill("1");
+  await secondInput.fill("3");
+  await saveBtn.click();
+  await dialog.getByRole("alert").filter({ hasText: "保存できませんでした。" }).waitFor();
+  assert.equal(await firstInput.inputValue(), "1");
+  assert.equal(await secondInput.inputValue(), "3");
+  assert.deepEqual(await page.evaluate(() => window.__SPLIT_CALLS__.slice(-2)), [
+    { course: "260S0002", arg: null, original: { first: 0, second: 4 } },
+    { course: "260S0002", arg: { first: 1, second: 3 }, original: { first: 0, second: 4 } },
+  ]);
+
+  // A saved split must stay with the originating course when its callback finishes late.
+  await page.evaluate(() => window.__SPLIT_HARNESS__.setNextResult("defer"));
+  await saveBtn.click();
+  await page.waitForFunction(() => typeof window.__FINISH_SPLIT__ === "function");
+
   // Switch to course C (split: null): empty, never guessed halves
   await page.evaluate(() => window.__SPLIT_HARNESS__.setCourseKey("C"));
   await dialog.getByText(/第1学期 0・第2学期 4/).waitFor({ state: "detached" });
+  await page.evaluate(() => window.__FINISH_SPLIT__());
+  await page.waitForFunction(() => window.__SAVED_SPLITS__?.B?.first === 1);
+  await saveBtn.waitFor();
   assert.equal(await firstInput.inputValue(), "");
   assert.equal(await secondInput.inputValue(), "");
 
@@ -275,9 +254,6 @@ try {
 
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
   console.log(
-    "SemesterCreditSplit browser check passed: validation, true 0, no half guessing, clear null, async false preservation, course switch refresh, and narrow mobile layout.",
+    "SemesterCreditSplit browser check passed: validation, true 0, save/clear baselines and rejections, async completion after course switch, and narrow mobile layout.",
   );
-} finally {
-  await browser?.close();
-  await viteServer.close();
-}
+});

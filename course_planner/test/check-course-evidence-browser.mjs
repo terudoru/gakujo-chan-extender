@@ -1,11 +1,6 @@
 // Focused 390px mobile + keyboard Playwright verification for CourseEvidenceForm in Meta Astryx Neutral.
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { createServer } from "vite";
-import { chromium } from "playwright-core";
-
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+import { withBrowserHarness } from "./browser-harness.mjs";
 
 const HARNESS_HTML = `<!doctype html>
 <html lang="ja">
@@ -91,59 +86,14 @@ function Harness() {
 createRoot(document.getElementById("root")).render(<Harness />);
 `;
 
-const virtualPlugin = {
+await withBrowserHarness({
   name: "course-evidence-harness",
-  configureServer(server) {
-    server.middlewares.use((req, res, next) => {
-      if (req.url === "/course-evidence.html") {
-        server
-          .transformIndexHtml("/course-evidence.html", HARNESS_HTML)
-          .then((html) => {
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "text/html; charset=utf-8");
-            res.end(html);
-          })
-          .catch(next);
-        return;
-      }
-      next();
-    });
-  },
-  resolveId(id) {
-    if (id === "/@course-evidence-harness.jsx") return id;
-    return null;
-  },
-  load(id) {
-    if (id === "/@course-evidence-harness.jsx") return HARNESS_ENTRY;
-    return null;
-  },
-};
-
-const viteServer = await createServer({
-  root,
-  server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-  logLevel: "error",
-  plugins: [virtualPlugin],
-});
-await viteServer.listen();
-const address = viteServer.httpServer.address();
-const url = `http://127.0.0.1:${address.port}/course-evidence.html`;
-
-let browser;
-try {
-  browser = await chromium.launch({
-    channel: process.env.CHROME_CHANNEL ?? "chrome",
-    headless: true,
-    chromiumSandbox: true,
-  });
-  const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-  });
-  const page = await context.newPage();
-  page.setDefaultTimeout(10000);
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-
+  pagePath: "/course-evidence.html",
+  entryPath: "/@course-evidence-harness.jsx",
+  html: HARNESS_HTML,
+  entry: HARNESS_ENTRY,
+  viewport: { width: 390, height: 844 },
+}, async ({ page, url, errors }) => {
   const assertNoOverflow = async (label) => {
     assert.equal(
       await page.evaluate(
@@ -359,7 +309,4 @@ try {
   console.log(
     "CourseEvidenceForm 390px + keyboard check passed: studyYear validation, diff-only save/clear, true/false/absent distinctness, hidden field retention, and all faculty schemas.",
   );
-} finally {
-  await browser?.close();
-  await viteServer.close();
-}
+});

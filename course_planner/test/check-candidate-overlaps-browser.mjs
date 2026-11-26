@@ -1,11 +1,6 @@
 // Focused Playwright browser verification for CandidateOverlaps with real Meta Astryx Neutral theme.
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { createServer } from "vite";
-import { chromium } from "playwright-core";
-
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+import { withBrowserHarness } from "./browser-harness.mjs";
 
 const HARNESS_HTML = `<!doctype html>
 <html lang="ja">
@@ -120,59 +115,14 @@ function App() {
 createRoot(document.getElementById("root")).render(<App />);
 `;
 
-const virtualPlugin = {
+await withBrowserHarness({
   name: "candidate-overlaps-harness",
-  configureServer(server) {
-    server.middlewares.use((req, res, next) => {
-      if (req.url === "/overlaps.html") {
-        server
-          .transformIndexHtml("/overlaps.html", HARNESS_HTML)
-          .then((html) => {
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "text/html; charset=utf-8");
-            res.end(html);
-          })
-          .catch(next);
-        return;
-      }
-      next();
-    });
-  },
-  resolveId(id) {
-    if (id === "/@overlaps-harness.jsx") return id;
-    return null;
-  },
-  load(id) {
-    if (id === "/@overlaps-harness.jsx") return HARNESS_ENTRY;
-    return null;
-  },
-};
-
-const viteServer = await createServer({
-  root,
-  server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-  logLevel: "error",
-  plugins: [virtualPlugin],
-});
-await viteServer.listen();
-const address = viteServer.httpServer.address();
-const url = `http://127.0.0.1:${address.port}/overlaps.html`;
-
-let browser;
-try {
-  browser = await chromium.launch({
-    channel: process.env.CHROME_CHANNEL ?? "chrome",
-    headless: true,
-    chromiumSandbox: true,
-  });
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 930 },
-  });
-  const page = await context.newPage();
-  page.setDefaultTimeout(10000);
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-
+  pagePath: "/overlaps.html",
+  entryPath: "/@overlaps-harness.jsx",
+  html: HARNESS_HTML,
+  entry: HARNESS_ENTRY,
+  viewport: { width: 1440, height: 930 },
+}, async ({ page, url, errors }) => {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.locator('[data-course="261S0002"] details.candidate-overlaps').waitFor({
     timeout: 30000,
@@ -238,7 +188,4 @@ try {
   console.log(
     "CandidateOverlaps browser check passed: keyboard disclosure, lazy DOM expansion/collapse, deduplication, click-to-open, desktop and mobile.",
   );
-} finally {
-  await browser?.close();
-  await viteServer.close();
-}
+});

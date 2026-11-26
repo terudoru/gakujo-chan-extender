@@ -125,13 +125,17 @@ export function SemesterCreditSplit({ course, split, onSave }) {
       return;
     }
 
+    await persistSplit(validated, "保存できませんでした。");
+  }
+
+  async function persistSplit(nextSplit, errorMessage) {
     setBusy(true);
     setTracked((prev) => ({ ...prev, error: "" }));
     try {
-      const ok = onSave ? await onSave(validated, original) : true;
+      const ok = onSave ? await onSave(nextSplit, original) : true;
       if (ok !== false) {
-        const nextFirst = String(validated.first);
-        const nextSecond = String(validated.second);
+        const nextFirst = toCreditText(nextSplit?.first);
+        const nextSecond = toCreditText(nextSplit?.second);
         setTracked((prev) =>
           prev.code === courseCode
             ? {
@@ -149,38 +153,7 @@ export function SemesterCreditSplit({ course, split, onSave }) {
     } catch (e) {
       setTracked((prev) =>
         prev.code === courseCode
-          ? { ...prev, error: e?.message ?? "保存できませんでした。" }
-          : prev,
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleClear() {
-    setBusy(true);
-    setTracked((prev) => ({ ...prev, error: "" }));
-    try {
-      const ok = onSave ? await onSave(null, original) : true;
-      if (ok !== false) {
-        setTracked((prev) =>
-          prev.code === courseCode
-            ? {
-                ...prev,
-                propFirst: "",
-                propSecond: "",
-                first: "",
-                second: "",
-                dirty: false,
-                error: "",
-              }
-            : prev,
-        );
-      }
-    } catch (e) {
-      setTracked((prev) =>
-        prev.code === courseCode
-          ? { ...prev, error: e?.message ?? "クリアできませんでした。" }
+          ? { ...prev, error: e?.message ?? errorMessage }
           : prev,
       );
     } finally {
@@ -252,7 +225,7 @@ export function SemesterCreditSplit({ course, split, onSave }) {
               busy ||
               (!hasSavedSplit && current.first === "" && current.second === "")
             }
-            onClick={handleClear}
+            onClick={() => persistSplit(null, "クリアできませんでした。")}
           />
         </div>
       </div>
