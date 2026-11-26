@@ -1,6 +1,6 @@
-class Base32 {
-  static const _alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+import 'package:base32/base32.dart' as codec;
 
+class Base32 {
   const Base32._();
 
   static String normalize(String secret) {
@@ -33,31 +33,10 @@ class Base32 {
   }
 
   static List<int> decode(String secret) {
-    final normalizedWithPadding = normalize(secret);
-    if (!isValid(normalizedWithPadding)) {
+    final normalized = normalize(secret);
+    if (!isValid(normalized)) {
       throw const FormatException('Invalid Base32 secret');
     }
-    final normalized = normalizedWithPadding.replaceAll(RegExp(r'=+$'), '');
-
-    final output = <int>[];
-    var buffer = 0;
-    var bitsLeft = 0;
-
-    for (final codeUnit in normalized.codeUnits) {
-      final value = _alphabet.indexOf(String.fromCharCode(codeUnit));
-      if (value < 0) {
-        throw const FormatException('Invalid Base32 character');
-      }
-
-      buffer = (buffer << 5) | value;
-      bitsLeft += 5;
-
-      if (bitsLeft >= 8) {
-        output.add((buffer >> (bitsLeft - 8)) & 0xff);
-        bitsLeft -= 8;
-      }
-    }
-
-    return output;
+    return codec.base32.decode(normalized).toList();
   }
 }

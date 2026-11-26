@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
+import 'package:async/async.dart';
+import 'package:collection/collection.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'allowed_web_origins.dart';
@@ -56,31 +58,19 @@ class AuthenticatedDownloadedFile {
 
   Future<void> validateResponse(String fileName,
       {required String requestUrl}) async {
-    Stream<List<int>> chunks() async* {
-      final bytes = _bytes;
-      if (bytes == null) {
-        yield* _file!.openRead();
-      } else {
-        for (var start = 0; start < bytes.length; start += 1024) {
-          final end = start + 1024 < bytes.length ? start + 1024 : bytes.length;
-          yield Uint8List.sublistView(bytes, start, end);
-        }
-      }
-    }
-
-    final prefix = BytesBuilder(copy: false);
-    await for (final chunk in chunks()) {
-      final remaining = 1024 - prefix.length;
-      prefix
-          .add(chunk.length <= remaining ? chunk : chunk.sublist(0, remaining));
-      if (prefix.length == 1024) break;
+    final reader = ChunkedStreamReader(openRead());
+    final Uint8List prefix;
+    try {
+      prefix = await reader.readBytes(1024);
+    } finally {
+      await reader.cancel();
     }
     DownloadResponsePolicy.validate(
       fileName: fileName,
       contentDispositionFileName: contentDispositionFileName,
       mimeType: mimeType,
       requestUrl: requestUrl,
-      prefix: prefix.takeBytes(),
+      prefix: prefix,
     );
   }
 
@@ -610,7 +600,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           throw PlatformException(code: 'download_too_large', message: 'ダウンロードが大きすぎます');
         }
         final directory = await Directory.systemTemp.createTemp('mbg_download_');
-        final file = File('${directory.path}${Platform.pathSeparator}download');
+        final file = File(p.join(directory.path, 'download'));
         final sink = file.openWrite();
         var received = 0;
         try {
@@ -716,7 +706,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   }
 
   Future<Directory> _ensureChildDirectory(Directory root, String name) async {
-    final directory = Directory(_join(root.path, name));
+    final directory = Directory(p.join(root.path, name));
     await directory.create(recursive: true);
     return directory;
   }
@@ -731,7 +721,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         desiredName,
         {...listedNames, ...namesAlreadyTried},
       );
-      final candidate = File(_join(directory.path, candidateName));
+      final candidate = File(p.join(directory.path, candidateName));
       try {
         await candidate.create(exclusive: true);
         return candidate;
@@ -782,35 +772,19 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   }
 
   Future<bool> _filesHaveSameContent(File firstFile, File secondFile) async {
-    final first = await firstFile.open();
+    const chunkSize = 64 * 1024;
+    const equality = ListEquality<int>();
+    final first = ChunkedStreamReader(firstFile.openRead());
+    final second = ChunkedStreamReader(secondFile.openRead());
     try {
-      final second = await secondFile.open();
-      try {
-        final buffer = Uint8List(64 * 1024);
-        while (true) {
-          final chunk = await first.read(buffer.length);
-          if (chunk.isEmpty) {
-            return await second.readByte() == -1;
-          }
-          var offset = 0;
-          while (offset < chunk.length) {
-            final count = await second.readInto(buffer, offset, chunk.length);
-            if (count == 0) {
-              return false;
-            }
-            offset += count;
-          }
-          for (var index = 0; index < chunk.length; index += 1) {
-            if (chunk[index] != buffer[index]) {
-              return false;
-            }
-          }
-        }
-      } finally {
-        await second.close();
+      while (true) {
+        final left = await first.readBytes(chunkSize);
+        if (left.isEmpty) return (await second.readBytes(1)).isEmpty;
+        final right = await second.readBytes(left.length);
+        if (!equality.equals(left, right)) return false;
       }
     } finally {
-      await first.close();
+      await Future.wait([first.cancel(), second.cancel()]);
     }
   }
 
@@ -821,13 +795,6 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
               '${Uri.encodeQueryComponent(entry[0])}=${Uri.encodeQueryComponent(entry[1])}',
         )
         .join('&');
-  }
-
-  static String _join(String parent, String child) {
-    if (parent.endsWith(Platform.pathSeparator)) {
-      return '$parent$child';
-    }
-    return '$parent${Platform.pathSeparator}$child';
   }
 
   static String _baseName(String path) {

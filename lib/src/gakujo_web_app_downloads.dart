@@ -349,7 +349,7 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
   }
   final directory = await (temporaryRoot ?? Directory.systemTemp)
       .createTemp('mbg-webview-download-');
-  final file = File('${directory.path}${Platform.pathSeparator}payload');
+  final file = File(p.join(directory.path, 'payload'));
   RandomAccessFile? output;
   Future<void>? inFlightWrite;
   var transferred = false;

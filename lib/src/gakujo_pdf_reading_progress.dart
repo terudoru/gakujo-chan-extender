@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'atomic_json_file.dart';
@@ -102,6 +103,6 @@ class GakujoPdfReadingProgress {
 
   Future<File> _file() async {
     final directory = _directory ?? await getApplicationSupportDirectory();
-    return File('${directory.path}${Platform.pathSeparator}$_fileName');
+    return File(p.join(directory.path, _fileName));
   }
 }

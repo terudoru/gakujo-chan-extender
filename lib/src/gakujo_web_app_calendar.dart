@@ -2294,9 +2294,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   }) async {
     final documents = await getApplicationDocumentsDirectory();
     final directory =
-        Directory(_joinLocalPath(documents.path, 'MoreBetterGakujoCalendar'));
+        Directory(p.join(documents.path, 'MoreBetterGakujoCalendar'));
     await directory.create(recursive: true);
-    final file = File(_joinLocalPath(directory.path, fileName));
+    final file = File(p.join(directory.path, fileName));
     await file.writeAsString(ics, flush: true);
     return file;
   }

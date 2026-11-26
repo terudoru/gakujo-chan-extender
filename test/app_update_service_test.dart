@@ -23,5 +23,13 @@ void main() {
       expect(compare('release-2026.6.23', '2026.6.22'), 1);
       expect(compare('MoreBetterGakujo-v0.67.1', '0.67.0'), 1);
     });
+
+    test('preserves numeric ordering and zero padding of legacy tags', () {
+      expect(compare('latest', '0.0.0'), 0);
+      expect(compare('1.2', '1.2.0'), 0);
+      expect(compare('1.2.3.10.0', '1.2.3.9.10'), 1);
+      expect(compare('1.2.3.0.1', '1.2.3'), 1);
+      expect(compare('1.2.3.4.0', '1.2.3.4'), 0);
+    });
   });
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:pub_semver/pub_semver.dart';
 
 class AppUpdateInfo {
   const AppUpdateInfo({
@@ -131,23 +132,10 @@ class AppUpdateService {
     return value.trim().replaceFirst(RegExp(r'^[vV]'), '').split('+').first;
   }
 
-  int _compareVersions(String left, String right) {
-    final leftParts = _versionParts(left);
-    final rightParts = _versionParts(right);
-    final maxLength = leftParts.length > rightParts.length
-        ? leftParts.length
-        : rightParts.length;
-    for (var index = 0; index < maxLength; index += 1) {
-      final l = index < leftParts.length ? leftParts[index] : 0;
-      final r = index < rightParts.length ? rightParts[index] : 0;
-      if (l != r) {
-        return l.compareTo(r);
-      }
-    }
-    return 0;
-  }
+  int _compareVersions(String left, String right) =>
+      _comparableVersion(left).compareTo(_comparableVersion(right));
 
-  List<int> _versionParts(String value) {
+  Version _comparableVersion(String value) {
     final parts = <int>[];
     final segments = _normalizeVersion(value).split(RegExp(r'[.-]'));
     for (final segment in segments) {
@@ -160,6 +148,19 @@ class AppUpdateService {
       }
       parts.add(int.parse(match.group(0)!));
     }
-    return parts.isEmpty ? const [0] : parts;
+    // Keep the historical numeric ordering for short and four-part tags.
+    // pub_semver compares numeric build identifiers after the first three.
+    while (parts.length < 3) {
+      parts.add(0);
+    }
+    while (parts.length > 3 && parts.last == 0) {
+      parts.removeLast();
+    }
+    return Version(
+      parts[0],
+      parts[1],
+      parts[2],
+      build: parts.length > 3 ? parts.skip(3).join('.') : null,
+    );
   }
 }

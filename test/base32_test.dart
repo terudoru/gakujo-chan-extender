@@ -25,6 +25,10 @@ void main() {
     expect(Base32.decode('MZXW6-YT BOI'), 'foobar'.codeUnits);
   });
 
+  test('accepts previously valid unused bits in the final character', () {
+    expect(Base32.decode('MZ======'), 'f'.codeUnits);
+  });
+
   test('rejects empty and invalid input', () {
     for (final secret in [
       '',

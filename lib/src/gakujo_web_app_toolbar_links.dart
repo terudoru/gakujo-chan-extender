@@ -83,7 +83,7 @@ class GakujoToolbarLinksStore {
 
   Future<File> _file() async {
     final directory = _directory ?? await getApplicationSupportDirectory();
-    return File('${directory.path}${Platform.pathSeparator}toolbar_links.json');
+    return File(p.join(directory.path, 'toolbar_links.json'));
   }
 
   Future<List<GakujoToolbarLink>> load() async {

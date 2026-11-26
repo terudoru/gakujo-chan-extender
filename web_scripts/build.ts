@@ -47,7 +47,6 @@ const entries: ({ source: string; output: string; name: string; kind?: 'statemen
   { source: 'web_scripts/src/calendar_extraction/main.ts', output: 'lib/src/generated/calendar_extraction.g.dart', name: 'gakujoCalendarExtractionJs', kind: 'expression' },
   { source: 'web_scripts/src/calendar_schedule_month_view_activation/main.ts', output: 'lib/src/generated/calendar_schedule_month_view_activation.g.dart', name: 'gakujoCalendarScheduleMonthViewActivationJs', kind: 'expression' },
   { source: 'web_scripts/src/popup_relay/main.ts', output: 'lib/src/generated/popup_relay.g.dart', name: 'gakujoPopupRelayJs' },
-  { source: 'web_scripts/src/image_bounds/main.ts', output: 'lib/src/generated/image_bounds.g.dart', name: 'gakujoImageBoundsJs' },
   { source: 'web_scripts/src/upload_preview/main.ts', output: 'lib/src/generated/upload_preview.g.dart', name: 'gakujoUploadPreviewJs', config: true },
   { source: 'web_scripts/src/assignment_attachment/main.ts', output: 'lib/src/generated/assignment_attachment.g.dart', name: 'gakujoAssignmentAttachmentJs', config: true },
   { source: 'web_scripts/src/upload_compression/main.ts', output: 'lib/src/generated/upload_compression.g.dart', name: 'gakujoUploadCompressionJs', config: true },

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -75,7 +76,7 @@ Future<void> _pruneExpiredPdfs() async {
 
 Future<void> _deletePdfDirectory(Directory directory) async {
   await _deleteTemporaryPhoto(
-    '${directory.path}${Platform.pathSeparator}$_fileName',
+    p.join(directory.path, _fileName),
   );
   try {
     await directory.delete();
@@ -258,7 +259,7 @@ class _PhotoPdfScannerState extends State<_PhotoPdfScanner> {
       if (!mounted) return;
       final root = await getTemporaryDirectory();
       directory = await root.createTemp(_directoryPrefix);
-      final file = File('${directory.path}${Platform.pathSeparator}$_fileName');
+      final file = File(p.join(directory.path, _fileName));
       await file.writeAsBytes(bytes);
       if (!mounted) return;
       Navigator.of(context).pop(XFile(file.path, mimeType: 'application/pdf'));

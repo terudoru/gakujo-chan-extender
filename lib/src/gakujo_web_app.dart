@@ -13,6 +13,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart'
@@ -5892,9 +5893,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }) async {
     final text = encodeGakujoBackupPayload(payload);
     final documents = await getApplicationDocumentsDirectory();
-    final directory = Directory(_joinLocalPath(documents.path, directoryName));
+    final directory = Directory(p.join(documents.path, directoryName));
     await directory.create(recursive: true);
-    final file = File(_joinLocalPath(directory.path, fileName));
+    final file = File(p.join(directory.path, fileName));
     await file.writeAsString(
       text,
       flush: true,
@@ -5908,13 +5909,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
     }
     return file;
-  }
-
-  String _joinLocalPath(String parent, String child) {
-    if (parent.endsWith(Platform.pathSeparator)) {
-      return '$parent$child';
-    }
-    return '$parent${Platform.pathSeparator}$child';
   }
 
   Future<void> _showFavoritesDialog({
@@ -7780,7 +7774,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<File> _driveDownloadsPreferenceFile() async {
     final directory = await getApplicationSupportDirectory();
-    return File(_joinLocalPath(directory.path, 'drive_downloads_enabled'));
+    return File(p.join(directory.path, 'drive_downloads_enabled'));
   }
 
   void _cancelGoogleSignIn() {

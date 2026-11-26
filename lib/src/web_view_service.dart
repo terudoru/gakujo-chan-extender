@@ -10,6 +10,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart';
@@ -425,7 +426,7 @@ Future<String> androidUploadFileUri(
   }
   final root = await (temporaryDirectory ?? getTemporaryDirectory)();
   final directory = await root.createTemp('mbg-upload-');
-  final destination = File('${directory.path}${Platform.pathSeparator}$name');
+  final destination = File(p.join(directory.path, name));
   await file.saveTo(destination.path);
   return destination.uri.toString();
 }

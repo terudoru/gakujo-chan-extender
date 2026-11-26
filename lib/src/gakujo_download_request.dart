@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:collection/collection.dart';
+
 import 'download_file_name_policy.dart';
 
 const maxGakujoDownloadBytes = 512 * 1024 * 1024;
@@ -28,14 +30,10 @@ class GakujoDownloadRequest {
       [for (final field in formFields.entries) [field.key, field.value]];
 
   List<List<String>> get canonicalFormFields {
-    final grouped = <String, List<String>>{};
-    for (final field in orderedFormFields) {
-      (grouped[field[0]] ??= []).add(field[1]);
-    }
-    final names = grouped.keys.toList()..sort();
+    final grouped = orderedFormFields.groupListsBy((field) => field[0]);
     return [
-      for (final name in names)
-        for (final value in grouped[name]!) [name, value],
+      for (final name in grouped.keys.sorted())
+        for (final field in grouped[name]!) [name, field[1]],
     ];
   }
 
@@ -56,35 +54,9 @@ class GakujoDownloadRequest {
     if (raw is! Map<String, dynamic>) {
       throw const FormatException('Download payload must be an object');
     }
-
-    final rawFields = raw['formFields'];
-    final fields = <String, String>{};
-    if (rawFields is Map) {
-      rawFields.forEach((key, value) {
-        if (key != null && value != null) {
-          fields[key.toString()] = value.toString();
-        }
-      });
-    }
-
-    final rawFileName = raw['fileName']?.toString();
-    final fileName = !DownloadFileNamePolicy.isUsefulDisplayedName(rawFileName)
-        ? ''
-        : DownloadFileNamePolicy.safeFileName(
-            preferredName: rawFileName,
-            url: raw['url']?.toString(),
-            mimeType: raw['mimeType']?.toString(),
-          );
-
-    return GakujoDownloadRequest(
-      url: raw['url']?.toString() ?? '',
-      method: (raw['method']?.toString() ?? 'GET').toUpperCase(),
-      courseName:
-          DownloadFileNamePolicy.safeFolderName(raw['courseName']?.toString()),
-      fileName: fileName,
-      formFields: fields,
-      formFieldPairs: _parsePairs(raw['formFieldPairs']),
-      courseNameAmbiguous: raw['courseNameAmbiguous'] == true,
+    return GakujoDownloadRequest._fromMap(
+      raw,
+      mimeType: raw['mimeType']?.toString(),
     );
   }
 
@@ -129,7 +101,13 @@ class GakujoDownloadRequest {
     };
   }
 
-  factory GakujoDownloadRequest.fromJsonMap(Map<dynamic, dynamic> raw) {
+  factory GakujoDownloadRequest.fromJsonMap(Map<dynamic, dynamic> raw) =>
+      GakujoDownloadRequest._fromMap(raw);
+
+  factory GakujoDownloadRequest._fromMap(
+    Map<dynamic, dynamic> raw, {
+    String? mimeType,
+  }) {
     final rawFields = raw['formFields'];
     final fields = <String, String>{};
     if (rawFields is Map) {
@@ -146,6 +124,7 @@ class GakujoDownloadRequest {
         : DownloadFileNamePolicy.safeFileName(
             preferredName: rawFileName,
             url: raw['url']?.toString(),
+            mimeType: mimeType,
           );
 
     return GakujoDownloadRequest(

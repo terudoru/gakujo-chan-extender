@@ -57,7 +57,7 @@ void main() {
       expect(out, isNotEmpty);
     });
     test('html entities', () {
-      expect(GakujoCourseNameEstimator.estimateFromHtml('<tr><td>科目名：A&amp;B 入門</td></tr>'), 'A&B 入門');
+      expect(GakujoCourseNameEstimator.estimateFromCandidates(['科目名：A&amp;B 入門']), 'A&B 入門');
     });
   });
   group('isUseful', () {

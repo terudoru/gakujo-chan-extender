@@ -1,3 +1,5 @@
+import { openDB } from "idb";
+
 const utf8 = new TextEncoder();
 export const maxEnvelope = 4 * 1024 * 1024;
 function base64(bytes) {
@@ -62,19 +64,17 @@ export function validEnvelope(value) {
 // Structured cloning a non-extractable CryptoKey avoids storing the pairing
 // code in planner state, URLs or serializable local-storage settings.
 export async function deviceKey(action, id, key) {
-  const db = await new Promise((resolve, reject) => {
-    const req = indexedDB.open("mbg.planner.sync.keys", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("keys");
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+  const db = await openDB("mbg.planner.sync.keys", 1, {
+    upgrade: db => db.createObjectStore("keys"),
   });
   try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction("keys", action === "get" ? "readonly" : "readwrite");
-      const store = tx.objectStore("keys");
-      const req = action === "put" ? store.put(key, id) : action === "delete" ? store.delete(id) : store.get(id);
-      tx.oncomplete = () => resolve(req.result);
-      tx.onabort = () => reject(tx.error ?? Error("端末に同期鍵を保存できません。"));
-    });
+    const tx = db.transaction("keys", action === "get" ? "readonly" : "readwrite");
+    const request = action === "put" ? tx.store.put(key, id)
+      : action === "delete" ? tx.store.delete(id) : tx.store.get(id);
+    const [result] = await Promise.all([request, tx.done]);
+    return result;
+  } catch (error) {
+    if (error?.name === "AbortError") throw Error("端末に同期鍵を保存できません。");
+    throw error;
   } finally { db.close(); }
 }

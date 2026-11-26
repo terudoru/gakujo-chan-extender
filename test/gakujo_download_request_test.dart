@@ -77,6 +77,17 @@ void main() {
     expect(request.fileName, '講義資料.pdf');
   });
 
+  test('uses capture MIME hints only at the JSON text entry point', () {
+    const payload = {
+      'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      'fileName': '講義資料',
+      'mimeType': 'application/pdf',
+    };
+    expect(GakujoDownloadRequest.fromJsonText(jsonEncode(payload)).fileName,
+        '講義資料.pdf');
+    expect(GakujoDownloadRequest.fromJsonMap(payload).fileName, '講義資料');
+  });
+
   test('keeps action labels unresolved through capture and retry', () {
     for (final label in [
       '一括ダウンロード',

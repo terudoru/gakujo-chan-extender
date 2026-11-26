@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'atomic_json_file.dart';
@@ -175,7 +176,7 @@ class GakujoLocalPrefsStore {
 
   Future<File> _file() async {
     final directory = _directory ?? await getApplicationSupportDirectory();
-    return File('${directory.path}${Platform.pathSeparator}$fileName');
+    return File(p.join(directory.path, fileName));
   }
 
   static Map<String, Object?> _encodePrefs(GakujoLocalPrefs prefs) {
