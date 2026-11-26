@@ -1,9 +1,9 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:pool/pool.dart';
 
 import 'atomic_json_file.dart';
 import 'gakujo_app_settings.dart';
@@ -39,15 +39,9 @@ class GakujoLocalPrefsStore {
   final Directory? _directory;
   final Future<void> Function(File temporaryFile, File targetFile)?
       _atomicReplace;
-  Future<void> _pendingWrite = Future<void>.value();
+  final _operations = Pool(1);
 
-  Future<GakujoLocalPrefs?> load() async {
-    GakujoLocalPrefs? loaded;
-    await _enqueue(() async {
-      loaded = await _read();
-    });
-    return loaded;
-  }
+  Future<GakujoLocalPrefs?> load() => _enqueue(_read);
 
   Future<void> saveAppSettings(GakujoAppSettings settings) {
     return _enqueueUpdate((current) {
@@ -137,10 +131,11 @@ class GakujoLocalPrefsStore {
     });
   }
 
-  Future<void> _enqueue(Future<void> Function() operation) {
-    final next = _pendingWrite.then((_) => operation());
-    _pendingWrite = next.catchError((Object _) {});
-    return next;
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final result = _operations.withResource(operation);
+    // A caller that does not wait for a write cannot interrupt later work.
+    result.ignore();
+    return result;
   }
 
   Future<GakujoLocalPrefs?> _read() async {

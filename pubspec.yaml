@@ -28,6 +28,7 @@ dependencies:
   webview_flutter_linux:
     path: third_party/webview_flutter_linux
   package_info_plus: ^10.1.0
+  pool: ^1.5.2
   pub_semver: ^2.2.0
   image_picker: ^1.2.4
   image: ^4.12.0

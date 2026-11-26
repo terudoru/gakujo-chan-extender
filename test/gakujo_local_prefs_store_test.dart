@@ -20,6 +20,32 @@ void main() {
     }
   });
 
+  test('queued settings operations continue in order after a failed write', () async {
+    var replacements = 0;
+    store = GakujoLocalPrefsStore(
+      directory: directory,
+      atomicReplace: (temporary, target) async {
+        if (++replacements == 1) throw FileSystemException('test write failed');
+        await temporary.rename(target.path);
+      },
+    );
+    final failed = expectLater(
+      store.saveLastGpa(3.5),
+      throwsA(isA<FileSystemException>()),
+    );
+    final save = store.saveUpdateCheck(dismissedVersion: 'v2');
+    final read = store.load();
+    final clear = store.clear();
+
+    await failed;
+    await save;
+    final prefs = await read;
+    expect(prefs?.dismissedUpdateVersion, 'v2');
+    expect(prefs?.lastGpa, isNull);
+    await clear;
+    expect(await store.load(), isNull);
+  });
+
   test('local settings ignore retired disabled flags', () async {
     final file = File('${directory.path}/local_prefs.json');
     await file.writeAsString(jsonEncode({

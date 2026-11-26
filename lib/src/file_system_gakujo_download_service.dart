@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:pool/pool.dart';
 
 import 'allowed_web_origins.dart';
 import 'download_destination_settings.dart';
@@ -151,7 +152,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   final HttpClient Function() _httpClientFactory;
   final Duration _requestTimeout;
   final bool? _usesNativeDownloadRootOverride;
-  Future<void> _pendingConfiguredFolderSave = Future<void>.value();
+  final _configuredFolderSaves = Pool(1);
   bool _linuxRootSessionOnly = false;
   String? _linuxSessionRootPath;
   int _linuxRootRevision = 0;
@@ -436,7 +437,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     required String courseFolderName,
     required bool autoSortByCourse,
   }) {
-    return _enqueueConfiguredFolderSave(() async {
+    return _configuredFolderSaves.withResource(() async {
       final root = await _configuredRootDirectory();
       final parent = autoSortByCourse
           ? await _ensureChildDirectory(root, courseFolderName)
@@ -474,15 +475,6 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         alreadySaved: existingFile != null,
       );
     });
-  }
-
-  Future<T> _enqueueConfiguredFolderSave<T>(Future<T> Function() operation) {
-    final next = _pendingConfiguredFolderSave.then((_) => operation());
-    _pendingConfiguredFolderSave = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace _) {},
-    );
-    return next;
   }
 
   Future<AuthenticatedDownloadedFile> _downloadBytes(
