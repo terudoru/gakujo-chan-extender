@@ -116,9 +116,23 @@ try {
   await upload(
     "区分.csv",
     "text/csv",
-    Buffer.from("区分,履修単位,既修得単位\n英語,22,2.5"),
+    Buffer.from("区分,履修単位,既修得単位\n英語,22,2.5\n卒業単位の合計,28,12"),
   );
-  await picked().check();
+  const pickTotal = modal.getByRole("checkbox", { name: /卒業単位の合計を取り込む/ });
+  const confirmTotal = modal.getByRole("checkbox", {
+    name: "成績確認表と照合し、重複単位を除いた合計であることを確認した",
+  });
+  await pickTotal.waitFor();
+  assert.equal(await confirmTotal.count(), 1);
+  assert.equal(await pickTotal.isDisabled(), true);
+  await confirmTotal.check();
+  await pickTotal.check();
+  await confirmTotal.uncheck();
+  assert.equal(await pickTotal.isDisabled(), true);
+  assert.equal(await pickTotal.isChecked(), false);
+  await confirmTotal.check();
+  assert.equal(await pickTotal.isChecked(), false);
+  await modal.getByRole("checkbox", { name: /英語を取り込む/ }).check();
   await accept();
   await modal.waitFor({ state: "hidden" });
   assert.equal((await readState()).balances[0].current, 2.5);
@@ -168,9 +182,9 @@ try {
     ["手入力講義", 2, "本人入力", "2019"],
   );
 
-  const nativeGrade = (title) =>
+  const nativeGrade = (title, alternative = "") =>
     page.evaluate(
-      (name) =>
+      ([name, oldName]) =>
         window.dispatchEvent(
           new CustomEvent("mbg:planner-import", {
             detail: {
@@ -180,25 +194,37 @@ try {
                 {
                   heading: "単位修得状況照会",
                   rows: [
-                    ["科目名", "単位数", "評価", "年度"],
-                    [name, "1", "可", "2018"],
+                    ["科目名", "単位数", "評価", "年度", "読替科目名"],
+                    [name, "1", "可", "2018", oldName],
                   ],
                 },
               ],
             },
           }),
         ),
-      title,
+      [title, alternative],
     );
   await page.evaluate(() => {
     window.testArchive.wait = true;
   });
-  await nativeGrade("取消講義");
+  await nativeGrade("取消講義", "架空科目");
+  const exclusionLabel = "同一科目の重複単位として除外";
+  const excludeDuplicate = modal.getByRole("checkbox", { name: exclusionLabel });
+  const confirmDistinct = modal.getByRole("checkbox", { name: "別々に算入できる単位と確認した" });
+  await excludeDuplicate.check();
+  await confirmDistinct.check();
+  assert.equal(await excludeDuplicate.isChecked(), false);
+  await excludeDuplicate.check();
+  assert.equal(await confirmDistinct.isChecked(), false);
   await picked().check();
   await accept();
   await page.waitForFunction(
     () => typeof window.testArchive.release === "function",
   );
+  assert.equal(await excludeDuplicate.isDisabled(), true);
+  assert.equal(await confirmDistinct.isDisabled(), true);
+  assert.equal(await picked().isDisabled(), true);
+  assert.equal(await modal.getByRole("button", { name: "保存中…" }).isDisabled(), true);
   await page.keyboard.press("Escape");
   await modal.waitFor({ state: "hidden" });
   await nativeGrade("新しい講義");
@@ -216,6 +242,8 @@ try {
   assert.equal((await readState()).grades[2].source, "単位修得状況照会");
   const takeEvaluation = async () => {
     await evaluation.waitFor();
+    const evaluationRow = evaluation.locator("xpath=ancestor::li");
+    assert.equal(await evaluationRow.getByRole("checkbox", { name: exclusionLabel }).count(), 0);
     assert.equal(await evaluation.isChecked(), false);
     await modal.getByText(/配当 2単位・修得 0単位/).waitFor();
     await evaluation.check();

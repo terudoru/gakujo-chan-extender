@@ -130,6 +130,19 @@ function ReviewForm({
                 target &&
                 (value.required ?? target.required) != null &&
                 (target.key !== "total" || choice.confirmTotal)));
+          const confirmationCheckbox = (flag, reset, label) => (
+            <label>
+              <input
+                type="checkbox"
+                checked={!!choice[flag]}
+                disabled={busy}
+                onChange={(e) =>
+                  set(row.id, { [flag]: e.target.checked, [reset]: false })
+                }
+              />{" "}
+              {label}
+            </label>
+          );
           return (
             <li key={row.id}>
               <label>
@@ -167,58 +180,21 @@ function ReviewForm({
                   options={review.targets.map((r) => [r.key, r.label])}
                 />
               )}
-              {value && target?.key === "total" && (
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={!!choice.confirmTotal}
-                    disabled={busy}
-                    onChange={(e) =>
-                      set(row.id, {
-                        confirmTotal: e.target.checked,
-                        selected: false,
-                      })
-                    }
-                  />{" "}
-                  成績確認表と照合し、重複単位を除いた合計であることを確認した
-                </label>
-              )}
+              {value &&
+                target?.key === "total" &&
+                confirmationCheckbox(
+                  "confirmTotal", "selected",
+                  "成績確認表と照合し、重複単位を除いた合計であることを確認した",
+                )}
               {value &&
                 review.kind === "grades" &&
                 !final &&
                 !value.duplicate &&
-                !value.identityUncertain && (
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={!!choice.excludeDuplicate}
-                      disabled={busy}
-                      onChange={(e) =>
-                        set(row.id, {
-                          excludeDuplicate: e.target.checked,
-                          confirmDistinct: false,
-                        })
-                      }
-                    />{" "}
-                    同一科目の重複単位として除外
-                  </label>
-                )}
-              {value?.possibleDuplicate && !value.identityUncertain && (
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={!!choice.confirmDistinct}
-                    disabled={busy}
-                    onChange={(e) =>
-                      set(row.id, {
-                        confirmDistinct: e.target.checked,
-                        excludeDuplicate: false,
-                      })
-                    }
-                  />{" "}
-                  別々に算入できる単位と確認した
-                </label>
-              )}
+                !value.identityUncertain &&
+                confirmationCheckbox("excludeDuplicate", "confirmDistinct", "同一科目の重複単位として除外")}
+              {value?.possibleDuplicate &&
+                !value.identityUncertain &&
+                confirmationCheckbox("confirmDistinct", "excludeDuplicate", "別々に算入できる単位と確認した")}
             </li>
           );
         })}
