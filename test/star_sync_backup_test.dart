@@ -1,4 +1,3 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
@@ -7,51 +6,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
-class _Storage extends FlutterSecureStorage {
-  final values = <String, String>{};
-
-  @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async => values[key];
-
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    values.remove(key);
-  }
-}
+import 'support/memory_secure_storage.dart';
 
 class _Transport implements StarSyncTransport {
   final files = <String, List<int>>{};
@@ -117,7 +72,7 @@ void main() {
     final remote = _Transport();
     var now = DateTime.utc(2026, 1, 1);
     StarSyncEngine make(String account) {
-      final storage = _Storage();
+      final storage = MemorySecureStorage();
       return StarSyncEngine(
         loginId: () => account,
         activityStore: GakujoActivityStore(secureStorage: storage),

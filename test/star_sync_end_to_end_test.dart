@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
@@ -11,52 +10,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dar
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
 import 'support/fake_google_drive.dart';
-
-class _Storage extends FlutterSecureStorage {
-  final values = <String, String>{};
-
-  @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async => values[key];
-
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    values.remove(key);
-  }
-}
+import 'support/memory_secure_storage.dart';
 
 void main() {
   test('Drive syncs stars between two devices', () async {
@@ -70,12 +24,12 @@ void main() {
       StarSyncTransport transport(StarSyncConfig config) =>
           StarSyncGoogleDriveTransport(
             apiBase: drive.base,
-            quotaMeter: StarSyncQuotaMeter(storage: _Storage()),
+            quotaMeter: StarSyncQuotaMeter(storage: MemorySecureStorage()),
             accessToken: ({bool forceRefresh = false}) async => 'token',
           );
 
-      final storageA = _Storage();
-      final storageB = _Storage();
+      final storageA = MemorySecureStorage();
+      final storageB = MemorySecureStorage();
       final activityA = GakujoActivityStore(secureStorage: storageA);
       final activityB = GakujoActivityStore(secureStorage: storageB);
       final a = StarSyncEngine(
@@ -140,15 +94,15 @@ void main() {
       includeSpaces: false,
       awaitUploadHook: false,
     );
-    final storageA = _Storage();
-    final storageB = _Storage();
-    StarSyncEngine engine(_Storage storage) => StarSyncEngine(
+    final storageA = MemorySecureStorage();
+    final storageB = MemorySecureStorage();
+    StarSyncEngine engine(MemorySecureStorage storage) => StarSyncEngine(
       loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => StarSyncGoogleDriveTransport(
         apiBase: drive.base,
-        quotaMeter: StarSyncQuotaMeter(storage: _Storage()),
+        quotaMeter: StarSyncQuotaMeter(storage: MemorySecureStorage()),
         accessToken: ({bool forceRefresh = false}) async => 'token',
       ),
     );

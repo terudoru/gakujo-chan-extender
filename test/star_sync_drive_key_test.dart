@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_collections.dart';
@@ -9,6 +8,8 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
+
+import 'support/star_sync_fakes.dart';
 
 class _Favorites extends StarSyncCollection {
   @override
@@ -28,56 +29,7 @@ class _Favorites extends StarSyncCollection {
   }) async => true;
 }
 
-class _Storage extends FlutterSecureStorage {
-  final values = <String, String>{};
-  bool failStarWriteOnce = false;
-
-  @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async => values[key];
-
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    if (failStarWriteOnce && key == 'more_better_gakujo_starred_messages') {
-      failStarWriteOnce = false;
-      throw StateError('star write failed');
-    }
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    values.remove(key);
-  }
-}
+typedef _Storage = StarSyncFakeStorage;
 
 class _Transport implements StarSyncTransport {
   final files = <String, List<int>>{};
