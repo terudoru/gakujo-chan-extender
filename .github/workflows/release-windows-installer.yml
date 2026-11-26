@@ -80,13 +80,15 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Check out the Google OAuth helper from the workflow revision
+      - name: Check out release tools from the workflow revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
-          sparse-checkout: scripts/write_google_oauth_defines.py
+          sparse-checkout: |
+            scripts/write_google_oauth_defines.py
+            scripts/package_windows_release.ps1
           sparse-checkout-cone-mode: false
 
       - name: Prepare Google OAuth defines
@@ -106,39 +108,7 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TAG: ${{ inputs.tag_name }}
-        run: |
-          $tagName = $env:RELEASE_TAG
-          $safeTagName = $tagName -replace '[^A-Za-z0-9._-]', '-'
-          $appVersion = $safeTagName -replace '^[vV]', ''
-          $versionNumbers = @([regex]::Matches($appVersion, '\d+') | ForEach-Object { $_.Value })
-          if ($versionNumbers.Count -eq 0) {
-            $versionNumbers = @("0", "0", "0", "0")
-          }
-          while ($versionNumbers.Count -lt 4) {
-            $versionNumbers += "0"
-          }
-          $versionInfo = ($versionNumbers | Select-Object -First 4) -join "."
-          $releaseDir = "build\windows\x64\runner\Release"
-          if (-not (Test-Path $releaseDir)) {
-            $releaseDir = "build\windows\runner\Release"
-          }
-          if (-not (Test-Path $releaseDir)) {
-            throw "Windows release output directory was not found."
-          }
-          # Inno Setup resolves relative Source paths against the .iss directory,
-          # so pass an absolute path for the build output.
-          $releaseDir = (Resolve-Path $releaseDir).Path
-
-          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
-          Compress-Archive -Path "$releaseDir\*" -DestinationPath "dist\${env:APP_NAME}-$safeTagName.zip" -Force
-
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
-            "distribution\windows\morebettergakujo.iss" `
-            "/DMyBuildDir=$releaseDir" `
-            "/DMyOutputDir=$((Resolve-Path dist).Path)" `
-            "/DMyAppVersion=$appVersion" `
-            "/DMyAppVersionInfo=$versionInfo" `
-            "/DMyOutputBaseFilename=${env:APP_NAME}-$safeTagName"
+        run: ./.release-tools/scripts/package_windows_release.ps1
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
