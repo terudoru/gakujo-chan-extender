@@ -1,51 +1,25 @@
 // Mount the same production leaf as a comparison card and a dialog without editing the parent-owned UI.
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build } from "vite";
+import { buildArchiveBundle, withArchiveBundle } from "./archive-bundle-harness.mjs";
 
-const entry = "content-test-entry";
-const root = fileURLToPath(new URL("../", import.meta.url));
-const bundle = await build({
-  root, configFile: fileURLToPath(new URL("../vite.config.js", import.meta.url)), logLevel: "error",
-  plugins: [{
-    name: "content-test-entry",
-    resolveId(id) { if (id === entry) return "\0" + entry; },
-    load(id) {
-      if (id !== "\0" + entry) return;
-      return `import React from "react"; import {createRoot} from "react-dom/client";
+const files = await buildArchiveBundle({
+  entry: "content-test-entry", name: "content-test-entry",
+  configFile: fileURLToPath(new URL("../vite.config.js", import.meta.url)),
+  source: `import React from "react"; import {createRoot} from "react-dom/client";
         import SyllabusContent from "/src/archive/content/SyllabusContent.jsx";
         const root = createRoot(document.getElementById("fixture"));
         window.showCourses = (...specs) => root.render(React.createElement(React.Fragment, null,
           ...specs.map(([department, code, year, asDialog], i) => React.createElement(asDialog ? "dialog" : "article",
             {open: asDialog || undefined, key: i}, React.createElement(SyllabusContent,
               {course:{department, code, title: code, year:"2026"}, year})))));
-        window.showCourses();`;
-    },
-  }],
-  build: { write: false, rollupOptions: { input: entry, output: { entryFileNames: "entry.js" } } },
+        window.showCourses();`,
 });
-const files = new Map(bundle.output.map((f) => ["/" + f.fileName, f.code ?? f.source]));
 const assets = [...files.keys()].filter((p) => p.endsWith(".json"));
 assert.equal(assets.length, 11);
 assert.ok(!files.get("/entry.js").includes("Sociolinguistics"));
 const html = '<!doctype html><html lang="ja"><meta charset="utf-8"><main id="fixture"></main><script type="module" src="./entry.js"></script></html>';
-const accessed = [];
-const server = createServer((req, res) => {
-  const pathname = new URL(req.url, "http://localhost").pathname;
-  if (!pathname.startsWith("/planner/")) return res.writeHead(404).end();
-  const path = pathname.slice("/planner".length);
-  accessed.push(path);
-  if (path === "/") return res.writeHead(200, { "Content-Type": "text/html" }).end(html);
-  if (!files.has(path)) return res.writeHead(404).end();
-  res.writeHead(200, { "Content-Type": path.endsWith(".json") ? "application/json" : "text/javascript" }).end(files.get(path));
-});
-await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
-const origin = "http://127.0.0.1:" + server.address().port;
-let browser;
-try {
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true, chromiumSandbox: true });
+await withArchiveBundle({ files, html, mount: "/planner" }, async ({ origin, browser, accessed }) => {
   const page = await browser.newPage({ viewport: { width: 375, height: 800 } });
   const errors = [], external = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -109,7 +83,4 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   console.log("Chrome: production lazy packs, mobile comparison and dialog, source locale, sparse/missing record, wrong year, stale fetch, malformed pack and HTTP retry passed.");
-} finally {
-  await browser?.close();
-  server.close();
-}
+});

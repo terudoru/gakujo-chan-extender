@@ -1,37 +1,14 @@
 // node course_planner/test/imports-browser.mjs (Chrome, synthetic data only).
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { build, preview } from "vite";
-import { chromium } from "playwright-core";
+import { join } from "node:path";
+import { plannerRoot, withPlannerPreview } from "./planner-preview-harness.mjs";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
-const outDir = await mkdtemp(join(tmpdir(), "planner-imports-"));
-let server, browser;
-try {
-  const config = {
-    root,
-    configFile: false,
-    logLevel: "warn",
-    build: {
-      outDir,
-      emptyOutDir: false,
-      rollupOptions: { input: join(root, "test/imports-harness.html") },
-    },
-  };
-  await build(config);
-  server = await preview({
-    ...config,
-    preview: { host: "127.0.0.1", port: 0 },
-  });
-  const origin = "http://127.0.0.1:" + server.httpServer.address().port;
-  browser = await chromium.launch({
-    channel: process.env.CHROME_CHANNEL || "chrome",
-    headless: true,
-    chromiumSandbox: true,
-  });
+await withPlannerPreview("planner-imports-", {
+  configFile: false,
+  logLevel: "warn",
+  headless: true,
+  build: { rollupOptions: { input: join(plannerRoot, "test/imports-harness.html") } },
+}, async ({ browser, origin }) => {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
     locale: "ja-JP",
@@ -312,9 +289,4 @@ try {
   console.log(
     "Chrome: PDF, CSV, TSV, manual and native review; zero-credit final evaluation opt-in across four inputs, selected archive matches, canceled lookup, invalid PDF, zero external/upload requests.",
   );
-} finally {
-  await browser?.close();
-  if (server) await server.close();
-  if (dirname(outDir) === tmpdir())
-    await rm(outDir, { recursive: true, force: true });
-}
+});

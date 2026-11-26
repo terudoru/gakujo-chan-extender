@@ -1,22 +1,11 @@
 // Run against the integrated planner. An optional project directory allows testing a separate import snapshot.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build, preview } from "vite";
+import { resolve } from "node:path";
+import { withPlannerPreview } from "./planner-preview-harness.mjs";
 
-const root = process.argv[2] ? resolve(process.argv[2]) : fileURLToPath(new URL("../", import.meta.url));
-const outDir = await mkdtemp(join(tmpdir(), "planner-archive-identity-"));
+const root = process.argv[2] ? resolve(process.argv[2]) : undefined;
 const title = "情報通信技術教育論I";
-let server, browser;
-try {
-  const config = { root, logLevel: "error", build: { outDir, emptyOutDir: false } };
-  await build(config);
-  server = await preview({ ...config, preview: { host: "127.0.0.1", port: 0 } });
-  const origin = "http://127.0.0.1:" + server.httpServer.address().port;
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL || "chrome", chromiumSandbox: true });
+await withPlannerPreview("planner-archive-identity-", { root }, async ({ browser, origin }) => {
   for (const [code, term, credits, expected] of [
     ["", "第4ターム", 3, null], ["261K0501", "第4ターム", 1, null],
     ["", "第1ターム", 3, null], ["", "第1ターム", 1, "261K0501"],
@@ -88,8 +77,4 @@ try {
     await page.close();
   }
   console.log("Chrome: confirmed imports, retained transcript units, field allocation and scoped review passed for four real-offering cases.");
-} finally {
-  await browser?.close();
-  await server?.close();
-  await rm(outDir, { recursive: true, force: true });
-}
+});

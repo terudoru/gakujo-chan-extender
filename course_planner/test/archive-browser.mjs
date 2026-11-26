@@ -1,20 +1,11 @@
 // Exercise the independently owned panel from its compiled production module on an isolated random port.
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build } from "vite";
+import { buildArchiveBundle, withArchiveBundle } from "./archive-bundle-harness.mjs";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
-const entry = "archive-panel-entry";
-const bundle = await build({
-  root, base: "./", configFile: false, logLevel: "error",
-  plugins: [{
-    name: "archive-test-entry",
-    resolveId(id) { if (id === entry) return "\0" + id; },
-    load(id) {
-      if (id !== "\0" + entry) return;
-      return `import React from "react";
+const files = await buildArchiveBundle({
+  entry: "archive-panel-entry", name: "archive-test-entry",
+  base: "./", configFile: false,
+  source: `import React from "react";
         import {createRoot} from "react-dom/client";
         import Panel from "/src/archive/HistoricalMatchPanel.jsx";
         import {matchHistoricalGrades} from "/src/archive/packs.mjs";
@@ -28,26 +19,10 @@ const bundle = await build({
           window.imported = row;
           createRoot(document.getElementById("app")).render(React.createElement(Panel,{grade:row, onConfirm: match => window.result = match}));
         }
-        show();`;
-    },
-  }],
-  build: { write: false, rollupOptions: { input: entry, output: { entryFileNames: "entry.js" } } },
+        show();`,
 });
-const files = new Map(bundle.output.map((chunk) => ["/" + chunk.fileName, chunk.code ?? chunk.source]));
 const html = '<!doctype html><meta charset="utf-8"><div id="app"></div><script type="module" src="./entry.js"></script>';
-const accessed = [];
-const server = createServer((req, res) => {
-  const path = new URL(req.url, "http://localhost").pathname;
-  accessed.push(path);
-  if (path === "/") return res.writeHead(200, { "Content-Type": "text/html" }).end(html);
-  if (!files.has(path)) return res.writeHead(404).end();
-  res.writeHead(200, { "Content-Type": path.endsWith(".json") ? "application/json" : "text/javascript" }).end(files.get(path));
-});
-await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
-const base = "http://127.0.0.1:" + server.address().port;
-let browser;
-try {
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true, chromiumSandbox: true });
+await withArchiveBundle({ files, html }, async ({ origin: base, browser, accessed }) => {
   const page = await browser.newPage();
   const errors = [];
   page.on("pageerror", (err) => errors.push(err.message));
@@ -115,7 +90,4 @@ try {
   assert.ok(!accessed.includes("/should-never-load"));
   assert.deepEqual(errors, []);
   console.log("Compiled panel: lazy year packs, 2020 exact and conflicting credits, namesake choice, missing year and local HTML confirmation passed.");
-} finally {
-  await browser?.close();
-  server.close();
-}
+});

@@ -1,26 +1,13 @@
 // Production planner, public catalogs and synthetic transcript rows only.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build, preview } from "vite";
 import { initialState } from "../src/study.mjs";
+import { withPlannerPreview } from "./planner-preview-harness.mjs";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
-const outDir = await mkdtemp(join(tmpdir(), "planner-failed-credit-review-"));
 const key = "mbg.course-planner.v1";
 const header = ["履修年度", "開講番号", "科目名", "開講所属", "修得単位", "評価"];
 const title = "現代教育学概論";
 const row = (year, faculty = "教育学部") => [year, year.slice(2) + "0K0363", title, faculty, "0", "不可"];
-let server, browser;
-try {
-  const config = { root, logLevel: "error", build: { outDir, emptyOutDir: false } };
-  await build(config);
-  server = await preview({ ...config, preview: { host: "127.0.0.1", port: 0 } });
-  const origin = "http://127.0.0.1:" + server.httpServer.address().port;
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL || "chrome", chromiumSandbox: true });
+await withPlannerPreview("planner-failed-credit-review-", {}, async ({ browser, origin }) => {
   const page = await browser.newPage();
   const errors = [], outside = [], years = [];
   let interruptPack;
@@ -135,8 +122,4 @@ try {
   assert.deepEqual(outside, []);
   assert.deepEqual(errors, []);
   console.log("Chrome passed both academic years, earned zero, explicit consent, native re-import, offline retry, replacement, cancellation and scoped pack requests.");
-} finally {
-  await browser?.close();
-  await server?.close();
-  await rm(outDir, { recursive: true, force: true });
-}
+});
