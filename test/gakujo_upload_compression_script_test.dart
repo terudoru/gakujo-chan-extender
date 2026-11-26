@@ -1,9 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:morebettergakujo_flutter/src/gakujo_download_capture_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_script.dart';
 import 'package:test/test.dart';
+
+import 'support/node_temp_file_runner.dart';
+
+const _tempPrefix = 'gakujo_upload_compression_';
 
 void main() {
   test(
@@ -429,7 +432,7 @@ void main() {
     'keeps live iframe hooks and restarts watching after teardown',
     () async {
       for (final withObserver in [false, true]) {
-        final result = await _runNode([
+        final result = await runNodeWithTempFiles(_tempPrefix, [
           'test/support/gakujo_upload_compression_script_iframe_document_replacement_harness.cts',
           GakujoUploadCompressionScript.build(),
           GakujoUploadCompressionScript.buildTeardown(),
@@ -444,7 +447,7 @@ void main() {
   test(
     'blocks programmatic submits with either download hook install order',
     () async {
-      final result = await _runNode([
+      final result = await runNodeWithTempFiles(_tempPrefix, [
         'test/support/gakujo_upload_compression_script_programmatic_submission_harness.cts',
         GakujoUploadCompressionScript.build(),
         GakujoUploadCompressionScript.buildTeardown(),
@@ -459,7 +462,8 @@ void main() {
 const _photo = {'name': 'scan.jpg', 'type': 'image/jpeg', 'size': 12000000};
 const _pdf = {'name': 'report.pdf', 'type': 'application/pdf', 'size': 8000000};
 Future<Map<String, dynamic>> _run(Map<String, Object?> scenario) async {
-  final result = await _runNode(
+  final result = await runNodeWithTempFiles(
+    _tempPrefix,
     [
       'test/support/gakujo_upload_compression_script_harness.cts',
       GakujoUploadCompressionScript.build(),
@@ -471,36 +475,4 @@ Future<Map<String, dynamic>> _run(Map<String, Object?> scenario) async {
   );
   expect(result.exitCode, 0, reason: '${result.stderr}');
   return jsonDecode(result.stdout as String) as Map<String, dynamic>;
-}
-
-
-
-
-
-
-
-/// Runs a node harness with its arguments passed through temp files: the
-/// scripts exceed Windows' command-line length limit when inlined.
-Future<ProcessResult> _runNode(
-  List<String> harnessAndArgs, {
-  Encoding? stdoutEncoding,
-  Encoding? stderrEncoding,
-}) async {
-  final dir = Directory.systemTemp.createTempSync('gakujo_upload_compression_');
-  try {
-    final paths = <String>[];
-    for (var i = 1; i < harnessAndArgs.length; i += 1) {
-      final file = File('${dir.path}${Platform.pathSeparator}arg$i.txt')
-        ..writeAsStringSync(harnessAndArgs[i]);
-      paths.add(file.path);
-    }
-    return await Process.run(
-      'node',
-      [harnessAndArgs.first, ...paths],
-      stdoutEncoding: stdoutEncoding ?? utf8,
-      stderrEncoding: stderrEncoding ?? utf8,
-    );
-  } finally {
-    dir.deleteSync(recursive: true);
-  }
 }

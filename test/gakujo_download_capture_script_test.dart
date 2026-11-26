@@ -1,9 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:morebettergakujo_flutter/src/gakujo_download_capture_script.dart';
 import 'package:morebettergakujo_flutter/src/generated/course_name_estimate.g.dart';
 import 'package:test/test.dart';
+
+import 'support/node_temp_file_runner.dart';
+
+const _tempPrefix = 'gakujo_download_capture_';
 
 void main() {
   test('excludes submission workflow buttons from weak download capture', () {
@@ -48,7 +51,8 @@ void main() {
   });
 
   test('preserves special form field names', () async {
-    final result = await _runNode(
+    final result = await runNodeWithTempFiles(
+      _tempPrefix,
       [
         'test/support/download_capture_special_fields_harness.cts',
         GakujoDownloadCaptureScript.build(),
@@ -77,7 +81,8 @@ void main() {
   });
 
   test('upgrades version 19 and captures once', () async {
-    final result = await _runNode(
+    final result = await runNodeWithTempFiles(
+      _tempPrefix,
       [
         'test/support/download_capture_special_fields_harness.cts',
         GakujoDownloadCaptureScript.build(),
@@ -106,7 +111,8 @@ void main() {
     late Map<String, dynamic> behavior;
 
     setUpAll(() async {
-      final result = await _runNode(
+      final result = await runNodeWithTempFiles(
+        _tempPrefix,
           [
             'test/support/download_capture_submission_harness.cts',
             GakujoDownloadCaptureScript.build(),
@@ -154,7 +160,7 @@ void main() {
   });
 
   test('teardown removes the injected click handler', () async {
-    final result = await _runNode([
+    final result = await runNodeWithTempFiles(_tempPrefix, [
       'test/support/gakujo_download_capture_script_download_capture_lifecycle_harness.cts',
       GakujoDownloadCaptureScript.build(),
       GakujoDownloadCaptureScript.buildTeardown(),
@@ -178,7 +184,7 @@ void main() {
 
   test('reattaches capture after a CampusSquare iframe document loads',
       () async {
-    final result = await _runNode([
+    final result = await runNodeWithTempFiles(_tempPrefix, [
       'test/support/gakujo_download_capture_script_download_capture_iframe_reload_harness.cts',
       GakujoDownloadCaptureScript.build(),
     ], stdoutEncoding: utf8, stderrEncoding: utf8);
@@ -207,7 +213,7 @@ void main() {
 
   test('captures only download links and resolves iframe-relative urls',
       () async {
-    final result = await _runNode([
+    final result = await runNodeWithTempFiles(_tempPrefix, [
       'test/support/gakujo_download_capture_script_download_capture_behavior_harness.cts',
       GakujoDownloadCaptureScript.build(),
     ], stdoutEncoding: utf8, stderrEncoding: utf8);
@@ -529,7 +535,7 @@ Future<Map<String, dynamic>> _evaluateBehavior(
   String scenario, [
   List<String> scripts = const [],
 ]) async {
-  final result = await _runNode([
+  final result = await runNodeWithTempFiles(_tempPrefix, [
     'test/support/gakujo_download_capture_script_download_capture_behavior_harness.cts',
     GakujoDownloadCaptureScript.build(),
     scenario,
@@ -538,36 +544,4 @@ Future<Map<String, dynamic>> _evaluateBehavior(
   ], stdoutEncoding: utf8, stderrEncoding: utf8);
   expect(result.exitCode, 0, reason: result.stderr as String);
   return jsonDecode(result.stdout as String) as Map<String, dynamic>;
-}
-
-
-
-
-
-
-
-/// Runs a node harness with its arguments passed through temp files: the
-/// scripts exceed Windows' command-line length limit when inlined.
-Future<ProcessResult> _runNode(
-  List<String> harnessAndArgs, {
-  Encoding? stdoutEncoding,
-  Encoding? stderrEncoding,
-}) async {
-  final dir = Directory.systemTemp.createTempSync('gakujo_download_capture_');
-  try {
-    final paths = <String>[];
-    for (var i = 1; i < harnessAndArgs.length; i += 1) {
-      final file = File('${dir.path}${Platform.pathSeparator}arg$i.txt')
-        ..writeAsStringSync(harnessAndArgs[i]);
-      paths.add(file.path);
-    }
-    return await Process.run(
-      'node',
-      [harnessAndArgs.first, ...paths],
-      stdoutEncoding: stdoutEncoding ?? utf8,
-      stderrEncoding: stderrEncoding ?? utf8,
-    );
-  } finally {
-    dir.deleteSync(recursive: true);
-  }
 }

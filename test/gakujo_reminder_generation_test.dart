@@ -391,30 +391,10 @@ void main() {
   ]) {
     test('booked in-app reminder after a sync: $outcome', () async {
       var now = DateTime.utc(2099, 7, 1, 8);
-      final store = _ControlledAssignmentStore();
-      final service = _ReminderNotificationService();
-      final coordinator = GakujoDeadlineNotificationCoordinator(
-        activityStore: store,
-        notificationService: service,
-        now: () => now,
-      );
-      await store.mergeAssignments([
-        GakujoAssignment(
-          kind: 'レポート',
-          title: '課題',
-          course: '科目',
-          status: '未提出',
-          dueAt: now.add(const Duration(hours: 2)),
-          capturedAt: now,
-        ),
-      ]);
-      Future<void> sync() => coordinator.syncReminders(
-        notificationsEnabled: true,
-        topics: {GakujoNotificationTopic.coursework},
-        preferences: const GakujoNotificationPreferences(
-          reminderOffsets: {GakujoReminderOffset.oneHour},
-        ),
-      );
+      final (:store, :service, :coordinator, :ready) =
+          _prepareReminderTest(() => now);
+      await ready;
+      Future<void> sync() => _syncCourseworkReminders(coordinator);
 
       await sync();
       final reminder = service.bookings.single.single;
@@ -454,30 +434,10 @@ void main() {
     'in-app callbacks wait for all queued syncs that preserve bookings',
     () async {
       var now = DateTime.utc(2099, 7, 1, 8);
-      final store = _ControlledAssignmentStore();
-      final service = _ReminderNotificationService();
-      final coordinator = GakujoDeadlineNotificationCoordinator(
-        activityStore: store,
-        notificationService: service,
-        now: () => now,
-      );
-      await store.mergeAssignments([
-        GakujoAssignment(
-          kind: 'レポート',
-          title: '課題',
-          course: '科目',
-          status: '未提出',
-          dueAt: now.add(const Duration(hours: 2)),
-          capturedAt: now,
-        ),
-      ]);
-      Future<void> sync() => coordinator.syncReminders(
-        notificationsEnabled: true,
-        topics: {GakujoNotificationTopic.coursework},
-        preferences: const GakujoNotificationPreferences(
-          reminderOffsets: {GakujoReminderOffset.oneHour},
-        ),
-      );
+      final (:store, :service, :coordinator, :ready) =
+          _prepareReminderTest(() => now);
+      await ready;
+      Future<void> sync() => _syncCourseworkReminders(coordinator);
 
       await sync();
       final reminder = service.bookings.single.single;
@@ -512,44 +472,11 @@ void main() {
     testWidgets(
       'one-shot reminder after queued syncs replace bookings: $replacesBookings',
       (tester) async {
-        const channel = MethodChannel(
-          'net.yoshida.morebettergakujo/notifications',
-        );
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(channel, (call) async => false);
-        addTearDown(() {
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-              .setMockMethodCallHandler(channel, null);
-        });
         var now = DateTime.utc(2099, 7, 1, 8);
-        final store = _ControlledAssignmentStore();
-        final service = _ReminderNotificationService(
-          now: () => now,
-          useRealTimers: true,
-        );
-        addTearDown(() => service.scheduleReminders(const []));
-        final coordinator = GakujoDeadlineNotificationCoordinator(
-          activityStore: store,
-          notificationService: service,
-          now: () => now,
-        );
-        await store.mergeAssignments([
-          GakujoAssignment(
-            kind: 'レポート',
-            title: '課題',
-            course: '科目',
-            status: '未提出',
-            dueAt: now.add(const Duration(hours: 1, seconds: 1)),
-            capturedAt: now,
-          ),
-        ]);
-        Future<void> sync() => coordinator.syncReminders(
-          notificationsEnabled: true,
-          topics: {GakujoNotificationTopic.coursework},
-          preferences: const GakujoNotificationPreferences(
-            reminderOffsets: {GakujoReminderOffset.oneHour},
-          ),
-        );
+        final (:store, :service, :coordinator, :ready) =
+            _prepareReminderTest(() => now, useRealTimers: true);
+        await ready;
+        Future<void> sync() => _syncCourseworkReminders(coordinator);
 
         await sync();
         final reminder = service.bookings.single.single;
@@ -605,37 +532,14 @@ void main() {
       testWidgets(
         'preserved reminder uses latest settings: $change, deferred: $deferred',
         (tester) async {
-          const channel = MethodChannel(
-            'net.yoshida.morebettergakujo/notifications',
-          );
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-              .setMockMethodCallHandler(channel, (call) async => false);
-          addTearDown(() {
-            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-                .setMockMethodCallHandler(channel, null);
-          });
           var now = DateTime.utc(2099, 7, 1, 8);
-          final store = _ControlledAssignmentStore();
-          final service = _ReminderNotificationService(
-            now: () => now,
+          final (:store, :service, :coordinator, :ready) = _prepareReminderTest(
+            () => now,
             useRealTimers: true,
+            kind: change == 'survey off' ? 'アンケート' : 'レポート',
+            status: change == 'skip submitted' ? '提出済' : '未提出',
           );
-          addTearDown(() => service.scheduleReminders(const []));
-          final coordinator = GakujoDeadlineNotificationCoordinator(
-            activityStore: store,
-            notificationService: service,
-            now: () => now,
-          );
-          await store.mergeAssignments([
-            GakujoAssignment(
-              kind: change == 'survey off' ? 'アンケート' : 'レポート',
-              title: '課題',
-              course: '科目',
-              status: change == 'skip submitted' ? '提出済' : '未提出',
-              dueAt: now.add(const Duration(hours: 1, seconds: 1)),
-              capturedAt: now,
-            ),
-          ]);
+          await ready;
           await coordinator.syncReminders(
             notificationsEnabled: true,
             topics: {...GakujoNotificationTopic.values},
@@ -779,6 +683,61 @@ void main() {
     expect(service.notifiedReminders, reminders);
   });
 }
+
+({
+  _ControlledAssignmentStore store,
+  _ReminderNotificationService service,
+  GakujoDeadlineNotificationCoordinator coordinator,
+  Future<void> ready,
+}) _prepareReminderTest(
+  DateTime Function() now, {
+  bool useRealTimers = false,
+  String kind = 'レポート',
+  String status = '未提出',
+}) {
+  if (useRealTimers) {
+    const channel = MethodChannel('net.yoshida.morebettergakujo/notifications');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => false);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+  }
+  final store = _ControlledAssignmentStore();
+  final service = useRealTimers
+      ? _ReminderNotificationService(now: now, useRealTimers: true)
+      : _ReminderNotificationService();
+  if (useRealTimers) addTearDown(() => service.scheduleReminders(const []));
+  final coordinator = GakujoDeadlineNotificationCoordinator(
+    activityStore: store,
+    notificationService: service,
+    now: now,
+  );
+  final ready = store.mergeAssignments([
+    GakujoAssignment(
+      kind: kind,
+      title: '課題',
+      course: '科目',
+      status: status,
+      dueAt: now().add(
+        useRealTimers
+            ? const Duration(hours: 1, seconds: 1)
+            : const Duration(hours: 2),
+      ),
+      capturedAt: now(),
+    ),
+  ]);
+  return (store: store, service: service, coordinator: coordinator, ready: ready);
+}
+
+Future<void> _syncCourseworkReminders(
+  GakujoDeadlineNotificationCoordinator coordinator,
+) => coordinator.syncReminders(
+  notificationsEnabled: true,
+  topics: {GakujoNotificationTopic.coursework},
+  preferences: const GakujoNotificationPreferences(
+    reminderOffsets: {GakujoReminderOffset.oneHour},
+  ),
+);
 
 class _BookingSecureStorage extends FlutterSecureStorage {
   String? gatedKey;

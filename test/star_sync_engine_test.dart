@@ -397,6 +397,33 @@ GakujoStarredMessage _syncStar(String seqNo, int minute) =>
       starredAt: DateTime.utc(2026, 11, 18, 0, minute),
     );
 
+StarSyncEngine _newStarSyncEngine(
+  _Transport remote,
+  _Storage storage,
+  GakujoActivityStore activity,
+) => StarSyncEngine(
+  loginId: () => 'student',
+  activityStore: activity,
+  secureStorage: storage,
+  transportFactory: (_) => remote,
+);
+
+({
+  StarSyncEngine a,
+  StarSyncEngine b,
+  GakujoActivityStore activityA,
+  GakujoActivityStore activityB,
+  _Storage storageB,
+}) _newStarSyncPair(_Transport remote) {
+  final storageA = _Storage();
+  final storageB = _Storage();
+  final activityA = GakujoActivityStore(secureStorage: storageA);
+  final activityB = GakujoActivityStore(secureStorage: storageB);
+  final a = _newStarSyncEngine(remote, storageA, activityA);
+  final b = _newStarSyncEngine(remote, storageB, activityB);
+  return (a: a, b: b, activityA: activityA, activityB: activityB, storageB: storageB);
+}
+
 class _StarSyncDevice {
   _StarSyncDevice(
     this.remote, {
@@ -3635,23 +3662,8 @@ void main() {
   });
 
   test('two devices share stars and propagate deletion', () async {
-    final remote = _Transport();
-    final storageA = _Storage();
-    final storageB = _Storage();
-    final activityA = GakujoActivityStore(secureStorage: storageA);
-    final activityB = GakujoActivityStore(secureStorage: storageB);
-    final a = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: activityA,
-      secureStorage: storageA,
-      transportFactory: (_) => remote,
-    );
-    final b = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: activityB,
-      secureStorage: storageB,
-      transportFactory: (_) => remote,
-    );
+    final (:a, :b, :activityA, :activityB, storageB: _) =
+        _newStarSyncPair(_Transport());
     await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(
       GakujoStarredMessage(
@@ -3672,20 +3684,8 @@ void main() {
   });
 
   test('failed state save does not resurrect a remote deletion', () async {
-    final remote = _Transport();
-    final storageA = _Storage();
-    final storageB = _Storage();
-    final activityA = GakujoActivityStore(secureStorage: storageA);
-    final activityB = GakujoActivityStore(secureStorage: storageB);
-    StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
-        StarSyncEngine(
-          loginId: () => 'student',
-          activityStore: activity,
-          secureStorage: storage,
-          transportFactory: (_) => remote,
-        );
-    final a = make(storageA, activityA);
-    final b = make(storageB, activityB);
+    final (:a, :b, :activityA, :activityB, :storageB) =
+        _newStarSyncPair(_Transport());
     final star = GakujoStarredMessage(
       keijitype: '1',
       genrecd: '2',
@@ -3716,20 +3716,8 @@ void main() {
   });
 
   test('edits after a failed state save survive and sync', () async {
-    final remote = _Transport();
-    final storageA = _Storage();
-    final storageB = _Storage();
-    final activityA = GakujoActivityStore(secureStorage: storageA);
-    final activityB = GakujoActivityStore(secureStorage: storageB);
-    StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
-        StarSyncEngine(
-          loginId: () => 'student',
-          activityStore: activity,
-          secureStorage: storage,
-          transportFactory: (_) => remote,
-        );
-    final a = make(storageA, activityA);
-    final b = make(storageB, activityB);
+    final (:a, :b, :activityA, :activityB, :storageB) =
+        _newStarSyncPair(_Transport());
     await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(
       GakujoStarredMessage(
@@ -3781,20 +3769,8 @@ void main() {
   });
 
   test('a re-star after a failed state save is a new edit', () async {
-    final remote = _Transport();
-    final storageA = _Storage();
-    final storageB = _Storage();
-    final activityA = GakujoActivityStore(secureStorage: storageA);
-    final activityB = GakujoActivityStore(secureStorage: storageB);
-    StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
-        StarSyncEngine(
-          loginId: () => 'student',
-          activityStore: activity,
-          secureStorage: storage,
-          transportFactory: (_) => remote,
-        );
-    final a = make(storageA, activityA);
-    final b = make(storageB, activityB);
+    final (:a, :b, :activityA, :activityB, :storageB) =
+        _newStarSyncPair(_Transport());
     final star = GakujoStarredMessage(
       keijitype: '1',
       genrecd: '2',
@@ -3841,19 +3817,15 @@ void main() {
         final baseline = failBaseline ? 'failed' : 'successful';
         test('survives $recovery with a $baseline baseline save', () async {
           final remote = _Transport();
-          final storageA = _Storage();
-          final storageB = _Storage();
-          final activityA = GakujoActivityStore(secureStorage: storageA);
-          var activityB = GakujoActivityStore(secureStorage: storageB);
-          StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
-              StarSyncEngine(
-                loginId: () => 'student',
-                activityStore: activity,
-                secureStorage: storage,
-                transportFactory: (_) => remote,
-              );
-          final a = make(storageA, activityA);
-          var b = make(storageB, activityB);
+          final (
+            :a,
+            b: initialB,
+            :activityA,
+            activityB: initialActivityB,
+            :storageB,
+          ) = _newStarSyncPair(remote);
+          var b = initialB;
+          var activityB = initialActivityB;
           addTearDown(a.dispose);
           addTearDown(() => b.dispose());
           await a.setUpWithDrive(config);
@@ -3907,7 +3879,7 @@ void main() {
           if (restart) {
             b.dispose();
             activityB = GakujoActivityStore(secureStorage: storageB);
-            b = make(storageB, activityB);
+            b = _newStarSyncEngine(remote, storageB, activityB);
             await b.load();
           }
           await b.syncNow();
