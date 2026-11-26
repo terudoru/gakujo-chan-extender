@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:test/test.dart';
 
+import 'support/delayed_memory_secure_storage.dart';
+
 void main() {
   test('loadDeadlines anchors year-less due dates to their capture time',
       () async {
@@ -1471,7 +1473,7 @@ void main() {
   });
 
   test('concurrent favorite additions keep both pages', () async {
-    final storage = _DelayedMemorySecureStorage(
+    final storage = DelayedMemorySecureStorage(
       readDelay: const Duration(milliseconds: 20),
     );
     final store = GakujoActivityStore(secureStorage: storage);
@@ -1497,59 +1499,6 @@ void main() {
     final favorites = await store.loadFavorites();
     expect(favorites.map((favorite) => favorite.title), {'ページA', 'ページB'});
   });
-}
-
-class _DelayedMemorySecureStorage extends FlutterSecureStorage {
-  _DelayedMemorySecureStorage({required this.readDelay});
-
-  final Duration readDelay;
-  final Map<String, String> values = {};
-
-  @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    final valueAtReadStart = values[key];
-    await Future<void>.delayed(readDelay);
-    return valueAtReadStart;
-  }
-
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    values.remove(key);
-  }
 }
 
 class _FailingReadSecureStorage extends FlutterSecureStorage {

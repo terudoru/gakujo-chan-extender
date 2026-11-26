@@ -2,65 +2,18 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_pdf_preview_server.dart';
 
-class _ViewerBundle extends CachingAssetBundle {
-  @override
-  Future<ByteData> load(String key) async {
-    if (key != 'assets/pdf_preview/web/index.html') {
-      throw StateError('Unexpected asset: $key');
-    }
-    return ByteData.sublistView(
-      Uint8List.fromList(
-        utf8.encode(
-          '<html><head><base href="/"></head><body>'
-          '<script src="flutter_bootstrap.js" async></script></body></html>',
-        ),
-      ),
-    );
-  }
-}
+import 'support/preview_loopback_fixture.dart';
 
 void main() {
-  Future<({int status, String body})> sendOpenLinkRequest(
-    HttpClient client,
-    Uri url, {
-    String method = 'POST',
-    String? origin = 'null',
-    String? contentType = 'text/plain; charset=utf-8',
-    String? host,
-    List<int>? bodyBytes,
-  }) async {
-    final request = await client.openUrl(method, url);
-    request.persistentConnection = false;
-    if (host != null) {
-      request.headers.set(HttpHeaders.hostHeader, host);
-    }
-    if (origin != null) {
-      request.headers.set('origin', origin);
-    }
-    if (contentType != null) {
-      request.headers.set(HttpHeaders.contentTypeHeader, contentType);
-    }
-    if (bodyBytes != null) {
-      request.contentLength = bodyBytes.length;
-      request.add(bodyBytes);
-    } else if (method == 'POST') {
-      request.contentLength = 0;
-    }
-    final response = await request.close();
-    final responseBody = await utf8.decoder.bind(response).join();
-    return (status: response.statusCode, body: responseBody);
-  }
-
   test('POST ./open-link opens allowed https/http URLs preserving exact query and fragment', () async {
     final opened = <Uri>[];
     final ack = Completer<bool>();
     var useAck = true;
     final server = GakujoPdfPreviewServer(
-      bundle: _ViewerBundle(),
+      bundle: PreviewTestAssetBundle(),
       openExternalLink: (url) async {
         opened.add(url);
         if (useAck) return ack.future;
@@ -80,7 +33,7 @@ void main() {
 
     var completed = false;
     final pending =
-        sendOpenLinkRequest(
+        sendPreviewRequest(
           client,
           openLinkUrl,
           origin: 'null',
@@ -110,7 +63,7 @@ void main() {
     useAck = false;
     const targetHttp = 'http://example.edu:8080/path/to/doc?a=1&b=2#top';
     final viewerOrigin = 'http://127.0.0.1:${indexUrl.port}';
-    final popupResult = await sendOpenLinkRequest(
+    final popupResult = await sendPreviewRequest(
       client,
       openLinkUrl,
       origin: viewerOrigin,
@@ -124,7 +77,7 @@ void main() {
   test('open-link rejects dangerous schemes, relative URLs, credentials, controls, spaces, and backslashes', () async {
     final opened = <Uri>[];
     final server = GakujoPdfPreviewServer(
-      bundle: _ViewerBundle(),
+      bundle: PreviewTestAssetBundle(),
       openExternalLink: (url) async {
         opened.add(url);
         return true;
@@ -167,7 +120,7 @@ void main() {
       r'https://example.com/path\to\file',
       '::::not-a-uri::::',
     ]) {
-      final result = await sendOpenLinkRequest(
+      final result = await sendPreviewRequest(
         client,
         openLinkUrl,
         bodyBytes: utf8.encode(invalid),
@@ -181,7 +134,7 @@ void main() {
   test('open-link enforces capability token, method, origin, MIME, query, and max 8192-byte body', () async {
     final opened = <Uri>[];
     final server = GakujoPdfPreviewServer(
-      bundle: _ViewerBundle(),
+      bundle: PreviewTestAssetBundle(),
       openExternalLink: (url) async {
         opened.add(url);
         return true;
@@ -199,7 +152,7 @@ void main() {
 
     // No GET / HEAD access
     expect(
-      (await sendOpenLinkRequest(
+      (await sendPreviewRequest(
         client,
         openLinkUrl,
         method: 'GET',
@@ -208,7 +161,7 @@ void main() {
       HttpStatus.notFound,
     );
     expect(
-      (await sendOpenLinkRequest(
+      (await sendPreviewRequest(
         client,
         openLinkUrl,
         method: 'HEAD',
@@ -219,7 +172,7 @@ void main() {
 
     // Wrong capability token, extra path segment, query string, or wrong Host
     expect(
-      (await sendOpenLinkRequest(
+      (await sendPreviewRequest(
         client,
         indexUrl.replace(path: '/wrong-token/open-link'),
         bodyBytes: validBody,
@@ -227,7 +180,7 @@ void main() {
       HttpStatus.notFound,
     );
     expect(
-      (await sendOpenLinkRequest(
+      (await sendPreviewRequest(
         client,
         indexUrl.replace(
           path: '/${indexUrl.pathSegments.first}/open-link/extra',
@@ -237,7 +190,7 @@ void main() {
       HttpStatus.notFound,
     );
     expect(
-      (await sendOpenLinkRequest(
+      (await sendPreviewRequest(
         client,
         openLinkUrl.replace(query: 'x=1'),
         bodyBytes: validBody,
@@ -245,7 +198,7 @@ void main() {
       HttpStatus.notFound,
     );
     expect(
-      (await sendOpenLinkRequest(
+      (await sendPreviewRequest(
         client,
         openLinkUrl,
         host: 'example.com',
@@ -261,7 +214,7 @@ void main() {
       'http://localhost:${indexUrl.port}',
       null,
     ]) {
-      final result = await sendOpenLinkRequest(
+      final result = await sendPreviewRequest(
         client,
         openLinkUrl,
         origin: badOrigin,
@@ -276,7 +229,7 @@ void main() {
       'text/html',
       'application/x-www-form-urlencoded',
     ]) {
-      final result = await sendOpenLinkRequest(
+      final result = await sendPreviewRequest(
         client,
         openLinkUrl,
         contentType: badMime,
@@ -290,7 +243,7 @@ void main() {
     final overLimitBytes = utf8.encode(overLimitUrl);
     expect(overLimitBytes.length, greaterThan(8192));
     expect(
-      (await sendOpenLinkRequest(
+      (await sendPreviewRequest(
         client,
         openLinkUrl,
         bodyBytes: overLimitBytes,
@@ -307,7 +260,7 @@ void main() {
       var mode = 'false';
       final opened = <Uri>[];
       final server = GakujoPdfPreviewServer(
-        bundle: _ViewerBundle(),
+        bundle: PreviewTestAssetBundle(),
         openExternalLink: (url) async {
           opened.add(url);
           if (mode == 'throw') throw StateError('launcher exception');
@@ -325,7 +278,7 @@ void main() {
       final body = utf8.encode('https://example.com/resource');
 
       // Launcher returning false yields 503 Service Unavailable
-      final falseResult = await sendOpenLinkRequest(
+      final falseResult = await sendPreviewRequest(
         client,
         openLinkUrl,
         bodyBytes: body,
@@ -334,7 +287,7 @@ void main() {
 
       // Launcher throwing yields 500 Internal Server Error
       mode = 'throw';
-      final errorResult = await sendOpenLinkRequest(
+      final errorResult = await sendPreviewRequest(
         client,
         openLinkUrl,
         bodyBytes: body,

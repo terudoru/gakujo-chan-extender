@@ -8,6 +8,8 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
 import 'package:test/test.dart';
 
+import 'support/delayed_memory_secure_storage.dart';
+
 void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
@@ -588,7 +590,7 @@ void main() {
   });
 
   test('concurrent history additions keep both downloads', () async {
-    final storage = _DelayedMemorySecureStorage(
+    final storage = DelayedMemorySecureStorage(
       readDelay: const Duration(milliseconds: 20),
     );
     final store = GakujoDownloadHistoryStore(secureStorage: storage);
@@ -621,60 +623,7 @@ class _ExcludeEveryBackupEntryStore extends GakujoDownloadHistoryStore {
   bool retainsBackupEntry(Object entry) => false;
 }
 
-class _DelayedMemorySecureStorage extends FlutterSecureStorage {
-  _DelayedMemorySecureStorage({required this.readDelay});
-
-  final Duration readDelay;
-  final Map<String, String> values = {};
-
-  @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    final valueAtReadStart = values[key];
-    await Future<void>.delayed(readDelay);
-    return valueAtReadStart;
-  }
-
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    values.remove(key);
-  }
-}
-
-class _FailingCompactionStorage extends _DelayedMemorySecureStorage {
+class _FailingCompactionStorage extends DelayedMemorySecureStorage {
   _FailingCompactionStorage() : super(readDelay: Duration.zero);
 
   final historyWriteStarted = Completer<void>();

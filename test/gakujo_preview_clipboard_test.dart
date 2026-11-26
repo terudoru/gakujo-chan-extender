@@ -1,67 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_pdf_preview_server.dart';
 
-class _ViewerBundle extends CachingAssetBundle {
-  @override
-  Future<ByteData> load(String key) async {
-    if (key != 'assets/pdf_preview/web/index.html') {
-      throw StateError('Unexpected asset: $key');
-    }
-    return ByteData.sublistView(
-      Uint8List.fromList(
-        utf8.encode(
-          '<html><head><base href="/"></head><body>'
-          '<script src="flutter_bootstrap.js" async></script></body></html>',
-        ),
-      ),
-    );
-  }
-}
+import 'support/preview_loopback_fixture.dart';
 
 void main() {
-  Future<({int status, String body})> sendClipboardRequest(
-    HttpClient client,
-    Uri url, {
-    String method = 'POST',
-    String? origin = 'null',
-    String? contentType = 'text/plain; charset=utf-8',
-    String? host,
-    List<int>? bodyBytes,
-  }) async {
-    final request = await client.openUrl(method, url);
-    request.persistentConnection = false;
-    if (host != null) {
-      request.headers.set(HttpHeaders.hostHeader, host);
-    }
-    if (origin != null) {
-      request.headers.set('origin', origin);
-    }
-    if (contentType != null) {
-      request.headers.set(HttpHeaders.contentTypeHeader, contentType);
-    }
-    if (bodyBytes != null) {
-      request.contentLength = bodyBytes.length;
-      request.add(bodyBytes);
-    } else if (method == 'POST') {
-      request.contentLength = 0;
-    }
-    final response = await request.close();
-    final responseBody = await utf8.decoder.bind(response).join();
-    return (status: response.statusCode, body: responseBody);
-  }
-
   test(
     'POST ./clipboard writes exact UTF-8 text and awaits native ack before 204',
     () async {
       final received = <String>[];
       final ack = Completer<void>();
       final server = GakujoPdfPreviewServer(
-        bundle: _ViewerBundle(),
+        bundle: PreviewTestAssetBundle(),
         writeClipboard: (text) async {
           received.add(text);
           await ack.future;
@@ -79,7 +33,7 @@ void main() {
 
       var completed = false;
       final pending =
-          sendClipboardRequest(
+          sendPreviewRequest(
             client,
             clipboardUrl,
             origin: 'null',
@@ -102,7 +56,7 @@ void main() {
 
       // Apple popup origin (exact loopback viewer origin) is also accepted
       final viewerOrigin = 'http://127.0.0.1:${indexUrl.port}';
-      final popupResult = await sendClipboardRequest(
+      final popupResult = await sendPreviewRequest(
         client,
         clipboardUrl,
         origin: viewerOrigin,
@@ -117,7 +71,7 @@ void main() {
   test('clipboard endpoint enforces capability token, method, origin, MIME, query, and no read access', () async {
     final received = <String>[];
     final server = GakujoPdfPreviewServer(
-      bundle: _ViewerBundle(),
+      bundle: PreviewTestAssetBundle(),
       writeClipboard: (text) async => received.add(text),
     );
     final client = HttpClient()..findProxy = (_) => 'DIRECT';
@@ -132,7 +86,7 @@ void main() {
 
     // No read endpoints (GET / HEAD)
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         clipboardUrl,
         method: 'GET',
@@ -141,7 +95,7 @@ void main() {
       HttpStatus.notFound,
     );
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         clipboardUrl,
         method: 'HEAD',
@@ -152,7 +106,7 @@ void main() {
 
     // Wrong capability token or path
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         indexUrl.replace(path: '/wrong-token/clipboard'),
         bodyBytes: validBody,
@@ -160,7 +114,7 @@ void main() {
       HttpStatus.notFound,
     );
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         indexUrl.replace(
           path: '/${indexUrl.pathSegments.first}/clipboard/extra',
@@ -172,7 +126,7 @@ void main() {
 
     // Query string rejected
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         clipboardUrl.replace(query: 'x=1'),
         bodyBytes: validBody,
@@ -182,7 +136,7 @@ void main() {
 
     // Wrong Host header rejected
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         clipboardUrl,
         host: 'example.com',
@@ -198,7 +152,7 @@ void main() {
       'http://localhost:${indexUrl.port}',
       null,
     ]) {
-      final result = await sendClipboardRequest(
+      final result = await sendPreviewRequest(
         client,
         clipboardUrl,
         origin: badOrigin,
@@ -213,7 +167,7 @@ void main() {
       'text/html',
       'application/x-www-form-urlencoded',
     ]) {
-      final result = await sendClipboardRequest(
+      final result = await sendPreviewRequest(
         client,
         clipboardUrl,
         contentType: badMime,
@@ -229,7 +183,7 @@ void main() {
     var shouldThrow = false;
     final received = <String>[];
     final server = GakujoPdfPreviewServer(
-      bundle: _ViewerBundle(),
+      bundle: PreviewTestAssetBundle(),
       writeClipboard: (text) async {
         if (shouldThrow) throw StateError('native clipboard failure');
         received.add(text);
@@ -246,7 +200,7 @@ void main() {
 
     // Empty body rejected with 400
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         clipboardUrl,
         bodyBytes: const [],
@@ -257,7 +211,7 @@ void main() {
     // Over 4,000,000 UTF-16 code units rejected with 400
     final overChars = utf8.encode('a' * 4000001);
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         clipboardUrl,
         bodyBytes: overChars,
@@ -353,7 +307,7 @@ void main() {
     // Native clipboard failure returns 500, not 204
     shouldThrow = true;
     expect(
-      (await sendClipboardRequest(
+      (await sendPreviewRequest(
         client,
         clipboardUrl,
         bodyBytes: utf8.encode('失敗テスト'),

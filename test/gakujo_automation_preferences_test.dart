@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
@@ -15,73 +14,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_auto_backup_schedule.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
-class _Storage extends FlutterSecureStorage {
-  final values = <String, String>{};
-  String? failOnce;
-  @override
-  Future<Map<String, String>> readAll({
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async => {...values};
-  @override
-  Future<String?> read({
-    required String key,
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async => values[key];
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async {
-    if (failOnce == key) {
-      failOnce = null;
-      throw StateError('Synthetic write failure');
-    }
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async {
-    values.remove(key);
-  }
-}
-
-Map<String, Object?> payload(GakujoAppSettings settings) =>
-    buildGakujoBackupPayload(
-      appSettings: settings,
-      downloadHistory: [],
-      failedDownloads: [],
-      favorites: [],
-      deadlines: [],
-      reportLists: [],
-    );
+import 'support/preference_backup_fixture.dart';
 
 void main() {
   test(
@@ -104,7 +37,7 @@ void main() {
         GakujoReportInitialSort.fromJson('unknown'),
         GakujoReportInitialSort.deadline,
       );
-      final storage = _Storage();
+      final storage = PreferenceBackupStorage();
       var loaded = await GakujoAppSettingsStore(secureStorage: storage).load();
       expect(
         loaded.autoBackupSettings.toJson(),
@@ -140,7 +73,7 @@ void main() {
   test(
     'each interval, generation count, and initial sort persists and exports',
     () async {
-      final storage = _Storage();
+      final storage = PreferenceBackupStorage();
       final store = GakujoAppSettingsStore(secureStorage: storage);
       for (final hours in GakujoAutoBackupSettings.intervals) {
         for (final count in GakujoAutoBackupSettings.generationCounts) {
@@ -156,7 +89,7 @@ void main() {
             expect(loaded.autoBackupSettings.toJson(), settings.toJson());
             expect(loaded.reportInitialSort, sort);
             final backup = parseGakujoBackup(
-              encodeGakujoBackupPayload(payload(loaded)),
+              encodeGakujoBackupPayload(buildPreferenceBackupPayload(loaded)),
             );
             expect(backup.autoBackupSettings!.toJson(), settings.toJson());
             expect(backup.reportInitialSort, sort);
@@ -190,11 +123,11 @@ void main() {
         source.autoBackupSettings.toJson(),
       );
       expect(merged.reportInitialSort, source.reportInitialSort);
-      final storage = _Storage();
+      final storage = PreferenceBackupStorage();
       final store = GakujoAppSettingsStore(secureStorage: storage);
       var runtime = const GakujoAppSettings();
       final backup = parseGakujoBackup(
-        encodeGakujoBackupPayload(payload(merged)),
+        encodeGakujoBackupPayload(buildPreferenceBackupPayload(merged)),
       );
       Future<void> restore() => restoreGakujoBackup(
         backup: backup,

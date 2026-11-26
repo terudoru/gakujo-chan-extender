@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
@@ -16,73 +15,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_quick_jump_destination.dart'
 import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:morebettergakujo_flutter/src/widgets/settings_sections.dart';
 
-class _Storage extends FlutterSecureStorage {
-  final values = <String, String>{};
-  String? failOnce;
-  @override
-  Future<Map<String, String>> readAll({
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async => {...values};
-  @override
-  Future<String?> read({
-    required String key,
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async => values[key];
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async {
-    if (failOnce == key) {
-      failOnce = null;
-      throw StateError('Synthetic write failure');
-    }
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    dynamic iOptions,
-    dynamic aOptions,
-    dynamic lOptions,
-    dynamic wOptions,
-    dynamic mOptions,
-    dynamic webOptions,
-  }) async {
-    values.remove(key);
-  }
-}
-
-Map<String, Object?> payload(GakujoAppSettings settings) =>
-    buildGakujoBackupPayload(
-      appSettings: settings,
-      downloadHistory: [],
-      failedDownloads: [],
-      favorites: [],
-      deadlines: [],
-      reportLists: [],
-    );
+import 'support/preference_backup_fixture.dart';
 
 void main() {
   test('defaults preserve startup 100 percent and previous page; unknown and missing fields fall back', () async {
@@ -102,7 +35,7 @@ void main() {
       expect(zoom.toJson(), const GakujoDesktopZoomSettings().toJson());
       expect(zoom.startupZoom, 1);
     }
-    final storage = _Storage();
+    final storage = PreferenceBackupStorage();
     var loaded = await GakujoAppSettingsStore(secureStorage: storage).load();
     expect(loaded.startupPage, GakujoStartupPage.previous);
     expect(loaded.desktopZoomSettings.startupZoom, 1);
@@ -130,7 +63,7 @@ void main() {
   test(
     'settings and local startup mirror persist all startup preferences',
     () async {
-      final storage = _Storage();
+      final storage = PreferenceBackupStorage();
       final store = GakujoAppSettingsStore(secureStorage: storage);
       const zoom = GakujoDesktopZoomSettings(
         startup: GakujoStartupZoom.previous,
@@ -179,9 +112,9 @@ void main() {
         ),
       );
       final backup = parseGakujoBackup(
-        encodeGakujoBackupPayload(payload(settings)),
+        encodeGakujoBackupPayload(buildPreferenceBackupPayload(settings)),
       );
-      final storage = _Storage();
+      final storage = PreferenceBackupStorage();
       final store = GakujoAppSettingsStore(secureStorage: storage);
       Future<void> restore() => restoreGakujoBackup(
         backup: backup,
