@@ -1,16 +1,11 @@
 import { openDB } from "idb";
+import { decodeBase64url, encodeBase64url as base64 } from "../base64url.mjs";
 
 const utf8 = new TextEncoder();
 export const maxEnvelope = 4 * 1024 * 1024;
-function base64(bytes) {
-  let result = "";
-  for (let i = 0; i < bytes.length; i += 8192)
-    result += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  return btoa(result).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-}
 function bytes(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error("暗号化データの形式を確認してください。");
-  return Uint8Array.from(atob(value.replaceAll("-", "+").replaceAll("_", "/")), (c) => c.charCodeAt(0));
+  return decodeBase64url(value);
 }
 export function newPairingCode() {
   return base64(crypto.getRandomValues(new Uint8Array(32)));

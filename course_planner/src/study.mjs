@@ -1,3 +1,4 @@
+import { decodeBase64url, encodeBase64url } from "./base64url.mjs";
 export const DAYS = [..."月火水木金土日"];
 export const GAKUJO =
   "https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=rs";
@@ -159,10 +160,7 @@ export function shareLink(list, year, base) {
   const url = new URL(base);
   url.search = "";
   const bytes = new TextEncoder().encode(JSON.stringify(snapshot(list, year)));
-  const encoded = Array.from(bytes, (n) => String.fromCharCode(n)).join("");
-  url.hash =
-    "list=" +
-    btoa(encoded).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  url.hash = "list=" + encodeBase64url(bytes);
   return url.href;
 }
 export function readShare(hash, year) {
@@ -172,11 +170,8 @@ export function readShare(hash, year) {
     throw Error("共有リンクを読み取れません。");
   let data;
   try {
-    const raw = atob(encoded.replaceAll("-", "+").replaceAll("_", "/"));
     data = JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(
-        Uint8Array.from(raw, (c) => c.charCodeAt(0)),
-      ),
+      new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64url(encoded)),
     );
   } catch {
     throw Error("共有リンクを読み取れません。");
