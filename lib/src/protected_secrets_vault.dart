@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'base32.dart';
 import 'secure_storage_factory.dart';
+import 'secure_storage_transaction.dart';
 
 const protectedSecretsKey = 'more_better_gakujo_protected_secrets_v1';
 const secretProtectionStateKey = 'more_better_gakujo_secret_protection_v1';
@@ -84,13 +85,7 @@ class ProtectedSecretsVault {
   ProtectedSecrets? _cache;
   DateTime? _expires;
   Timer? _timer;
-  Future<void> _pending = Future<void>.value();
-
-  Future<T> _enqueue<T>(Future<T> Function() operation) {
-    final result = _pending.then((_) => operation());
-    _pending = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
-    return result;
-  }
+  final _operations = StorageOperationQueue();
 
   void clearCache() {
     _timer?.cancel();
@@ -106,7 +101,7 @@ class ProtectedSecretsVault {
     _timer = Timer(const Duration(seconds: 90), clearCache);
   }
 
-  Future<ProtectedSecrets?> read() => _enqueue(_read);
+  Future<ProtectedSecrets?> read() => _operations.run(_read);
 
   Future<ProtectedSecrets?> _read() async {
     if (_cache != null && _clock().isBefore(_expires!)) return _cache;
@@ -123,7 +118,8 @@ class ProtectedSecretsVault {
     return value;
   }
 
-  Future<void> write(ProtectedSecrets value) => _enqueue(() => _write(value));
+  Future<void> write(ProtectedSecrets value) =>
+      _operations.run(() => _write(value));
 
   Future<void> _write(ProtectedSecrets value) async {
     await _storage.write(
@@ -139,7 +135,7 @@ class ProtectedSecretsVault {
     ProtectedSecrets Function(ProtectedSecrets current) change, {
     Future<void> Function(ProtectedSecrets committed)? onCommitted,
     bool replaceUnreadable = false,
-  }) => _enqueue(() async {
+  }) => _operations.run(() async {
     ProtectedSecrets current;
     try {
       current = await _read() ?? const ProtectedSecrets();
@@ -153,7 +149,7 @@ class ProtectedSecretsVault {
     return value;
   });
 
-  Future<void> delete() => _enqueue(() async {
+  Future<void> delete() => _operations.run(() async {
     clearCache();
     await _storage.delete(key: protectedSecretsKey);
   });

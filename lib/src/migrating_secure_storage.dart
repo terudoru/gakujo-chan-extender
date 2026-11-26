@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'secure_storage_transaction.dart';
+
 class MigratingSecureStorage extends FlutterSecureStorage {
   MigratingSecureStorage({
     required this._primary,
@@ -21,7 +23,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   final Set<String>? _migrationKeys;
   final Duration _storageOperationTimeout;
   Future<bool>? _migrationSweepFuture;
-  Future<void> _pendingStorageOperation = Future<void>.value();
+  final _operations = StorageOperationQueue();
   bool _fallbackReadsSuppressed = false;
   // A timed-out sweep means the keychain is blocked (e.g. an unanswered macOS
   // access dialog); further reads would only wait out their own timeouts.
@@ -342,7 +344,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
             mOptions: mOptions,
             wOptions: wOptions,
           );
-    return _enqueueStorageOperation(() async {
+    return _operations.run(() async {
       if (migration != null && !await migration) {
         throw StateError('Secure-storage migration did not complete');
       }
@@ -388,7 +390,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
             mOptions: mOptions,
             wOptions: wOptions,
           );
-    return _enqueueStorageOperation(() async {
+    return _operations.run(() async {
       if (migration != null && !await migration) {
         throw StateError('Secure-storage migration did not complete');
       }
@@ -423,7 +425,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) {
-    return _enqueueStorageOperation(() async {
+    return _operations.run(() async {
       await _primary.deleteAll(
         iOptions: iOptions,
         aOptions: aOptions,
@@ -549,7 +551,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     }
 
     late final Future<bool> tracked;
-    tracked = _enqueueStorageOperation(
+    tracked = _operations.run(
       () => _runMigrationSweep(
         iOptions: iOptions,
         aOptions: aOptions,
@@ -920,14 +922,5 @@ class MigratingSecureStorage extends FlutterSecureStorage {
       // The primary value (or the migration/deletion marker) remains
       // authoritative when a legacy keychain cannot be cleaned up.
     }
-  }
-
-  Future<T> _enqueueStorageOperation<T>(Future<T> Function() operation) {
-    final next = _pendingStorageOperation.then((_) => operation());
-    _pendingStorageOperation = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace _) {},
-    );
-    return next;
   }
 }

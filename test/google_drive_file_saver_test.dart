@@ -38,6 +38,8 @@ void main() {
   late Map<String, String?> metadataTokens;
   late List<String> queries;
   late List<String?> fields;
+  late List<Uri> listRequests;
+  late Map<String, (int, Map<String, Object?>)> listReplies;
   var uploads = 0;
   var chunks = 0;
   var received = 0;
@@ -74,6 +76,8 @@ void main() {
     metadataTokens = {};
     queries = [];
     fields = [];
+    listRequests = [];
+    listReplies = {};
     uploads = 0;
     chunks = 0;
     received = 0;
@@ -152,7 +156,17 @@ void main() {
       } else if (request.method == 'GET') {
         final query = request.uri.queryParameters['q']!;
         queries.add(query);
-        fields.add(request.uri.queryParameters['fields']);
+        final projection = request.uri.queryParameters['fields'];
+        fields.add(projection);
+        listRequests.add(request.uri);
+        final reply = listReplies[projection];
+        if (reply != null) {
+          final (status, payload) = reply;
+          response.statusCode = status;
+          response.write(jsonEncode(payload));
+          await response.close();
+          return;
+        }
         if (query == "mimeType='application/vnd.google-apps.folder' and trashed=false") {
           final folders = files.where((f) =>
               f['mimeType'] == 'application/vnd.google-apps.folder' &&
@@ -658,6 +672,53 @@ void main() {
     final folders = await saver.listFolders();
     expect(folders.map((f) => f.path).toList(), ['Orphan', 'School', 'School / Math']);
     expect(queries, hasLength(2));
+    expect(listRequests.map((uri) => uri.queryParameters), [
+      for (final token in [null, 'next'])
+        {
+          'q': "mimeType='application/vnd.google-apps.folder' and trashed=false",
+          'fields': 'nextPageToken,files(id,name,parents,ownedByMe,shared)',
+          'pageSize': '1000',
+          'pageToken': ?token,
+        },
+    ]);
+  });
+
+  for (final (page, message) in [
+    ({'files': {}, 'nextPageToken': 'next'}, 'Invalid Drive file list'),
+    ({'files': [], 'nextPageToken': 123}, 'Invalid page token'),
+  ]) {
+    test('folder listing rejects $message on the first page', () async {
+      listReplies['nextPageToken,files(id,name,parents,ownedByMe,shared)'] =
+          (200, page);
+      await expectLater(
+        saver.listFolders(),
+        throwsA(isA<FormatException>().having((e) => e.message, 'message', message)),
+      );
+      expect(listRequests, hasLength(1));
+    });
+  }
+
+  test('an empty next-page token ends the folder list', () async {
+    listReplies['nextPageToken,files(id,name,parents,ownedByMe,shared)'] =
+        (200, {'files': [], 'nextPageToken': ''});
+    expect(await saver.listFolders(), isEmpty);
+    expect(listRequests, hasLength(1));
+  });
+
+  test('a missing folder listing retains the transport error', () async {
+    listReplies['nextPageToken,files(id,name,parents,ownedByMe,shared)'] =
+        (404, {});
+    await expectLater(
+      saver.listFolders(),
+      throwsA(
+        isA<StarSyncTransportException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncTransportErrorKind.notFound,
+        ),
+      ),
+    );
+    expect(listRequests, hasLength(1));
   });
 
   test('createFolder reuses an existing same-named folder', () async {
@@ -1000,9 +1061,54 @@ void main() {
     await saver.processPendingChecks();
     expect(deleted, ['uploaded']);
     expect(
-      fields.where((field) => field == 'nextPageToken,files(id)'),
-      hasLength(2),
+      listRequests.map((uri) => uri.queryParameters)
+          .where((query) => query['fields'] == 'nextPageToken,files(id)'),
+      [
+        for (final token in [null, 'children'])
+          {
+            'q': "'$uploadParent' in parents and trashed=false",
+            'fields': 'nextPageToken,files(id)',
+            'pageSize': '1',
+            'pageToken': ?token,
+          },
+      ],
     );
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
+  test('a known child ends cleanup before inspecting an invalid next token', () async {
+    failCheck = true;
+    await expectLater(
+      save('Course', 'file', 1),
+      throwsA(isA<GoogleDrivePendingCheckException>()),
+    );
+    failCheck = false;
+    files.singleWhere((f) => f['name'] == 'Course')['shared'] = true;
+    listReplies['nextPageToken,files(id)'] = (
+      200,
+      {
+        'files': [{'id': 'other-child'}],
+        'nextPageToken': 123,
+      },
+    );
+    await saver.processPendingChecks();
+    expect(deleted, ['uploaded']);
+    expect(fields.where((field) => field == 'nextPageToken,files(id)'), hasLength(1));
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
+  test('a missing child listing keeps a folder whose emptiness is unknown', () async {
+    failCheck = true;
+    await expectLater(
+      save('Course', 'file', 1),
+      throwsA(isA<GoogleDrivePendingCheckException>()),
+    );
+    failCheck = false;
+    files.singleWhere((f) => f['name'] == 'Course')['shared'] = true;
+    listReplies['nextPageToken,files(id)'] = (404, {});
+    await saver.processPendingChecks();
+    expect(deleted, ['uploaded']);
+    expect(fields.where((field) => field == 'nextPageToken,files(id)'), hasLength(1));
     expect(storage.values[googleDrivePendingChecksKey], isNull);
   });
 
@@ -1266,6 +1372,19 @@ void main() {
 
   test('counts lists, folder creation and each upload request', () async {
     await save('Course', 'file', 8 * 1024 * 1024 + 1);
+    expect(listRequests, isNotEmpty);
+    expect(
+      listRequests.map((uri) => (
+        uri.queryParameters['fields'],
+        uri.queryParameters['pageSize'],
+        uri.queryParameters['pageToken'],
+      )),
+      everyElement((
+        'nextPageToken,files(id,name,size,mimeType,md5Checksum,createdTime,ownedByMe,shared,appProperties)',
+        '1000',
+        null,
+      )),
+    );
     expect(chunks, 2);
     expect(await meter.currentUsage(), 560);
   });

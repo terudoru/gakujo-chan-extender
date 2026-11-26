@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'atomic_json_file.dart';
+import 'secure_storage_transaction.dart';
 
 /// Stores page numbers by document digest on this device.
 class GakujoPdfReadingProgress {
@@ -21,16 +22,16 @@ class GakujoPdfReadingProgress {
   );
 
   final Directory? _directory;
-  Future<void> _tail = Future<void>.value();
+  final _operations = StorageOperationQueue();
 
   Future<int?> read(String key) {
     if (!_validKey(key)) return Future<int?>.value();
-    return _enqueue(() async => (await _read(await _file()))[key]);
+    return _operations.run(() async => (await _read(await _file()))[key]);
   }
 
   Future<void> save(String key, int page) {
     if (!_validKey(key) || !_validPage(page)) return Future<void>.value();
-    return _enqueue(() async {
+    return _operations.run(() async {
       final file = await _file();
       final pages = await _read(file);
       if (pages.isNotEmpty && pages.keys.last == key && pages[key] == page) {
@@ -45,7 +46,7 @@ class GakujoPdfReadingProgress {
   }
 
   Future<void> clear() {
-    return _enqueue(() async {
+    return _operations.run(() async {
       final file = await _file();
       if (!await file.parent.exists()) return;
       await for (final entry in file.parent.list(followLinks: false)) {
@@ -56,12 +57,6 @@ class GakujoPdfReadingProgress {
         }
       }
     });
-  }
-
-  Future<T> _enqueue<T>(Future<T> Function() action) {
-    final next = _tail.then((_) => action());
-    _tail = next.then<void>((_) {}, onError: (Object _) {});
-    return next;
   }
 
   static bool _validKey(String key) =>

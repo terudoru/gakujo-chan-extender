@@ -11,6 +11,7 @@ import 'gakujo_app_settings.dart';
 import 'gakujo_assignment.dart';
 import 'gakujo_dated_activity.dart';
 import 'gakujo_notification_history.dart';
+import 'secure_storage_transaction.dart';
 
 typedef DeadlineNotificationTappedCallback = FutureOr<void> Function(
   String url,
@@ -795,7 +796,7 @@ class GakujoDeadlineNotificationCoordinator {
   final GakujoActivityStore _activityStore;
   final GakujoNotificationService _notificationService;
   final DateTime Function() _now;
-  Future<void> _pendingNotificationOperation = Future<void>.value();
+  final _operations = StorageOperationQueue();
   int _reminderGeneration = 0;
   int _bookedReminderGeneration = 0;
   int _queuedReminderSyncs = 0;
@@ -858,7 +859,7 @@ class GakujoDeadlineNotificationCoordinator {
     List<String> messageExcludeKeywords = const [],
     GakujoAppSettings Function()? currentSettings,
   }) {
-    return _enqueueNotificationOperation(
+    return _operations.run(
       () => _notifyPendingDeadlines(
         notificationsEnabled: notificationsEnabled,
         allowPermissionRequest: allowPermissionRequest,
@@ -1010,7 +1011,7 @@ class GakujoDeadlineNotificationCoordinator {
     final generation = ++_reminderGeneration;
     // Suppress timer callbacks until every queued sync has finished.
     _queuedReminderSyncs += 1;
-    return _enqueueNotificationOperation(() async {
+    return _operations.run(() async {
       try {
         bool needsAssignments() => _reminderNotificationsEnabled &&
             _reminderPreferences.reminderOffsets.isNotEmpty &&
@@ -1078,7 +1079,7 @@ class GakujoDeadlineNotificationCoordinator {
         _deferredReminders.clear();
         final booksAhead = await _notificationService.scheduleReminders(
           reminders,
-          onInAppReminder: (reminder) => _enqueueNotificationOperation(() async {
+          onInAppReminder: (reminder) => _operations.run(() async {
             if (generation != _bookedReminderGeneration) {
               return;
             }
@@ -1221,16 +1222,5 @@ class GakujoDeadlineNotificationCoordinator {
       for (final key in keys)
         ?gakujoLegacyMessageNotificationKey(key),
     };
-  }
-
-  Future<T> _enqueueNotificationOperation<T>(
-    Future<T> Function() operation,
-  ) {
-    final next = _pendingNotificationOperation.then((_) => operation());
-    _pendingNotificationOperation = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace _) {},
-    );
-    return next;
   }
 }

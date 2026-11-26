@@ -156,6 +156,39 @@ class GoogleDriveFileSaver {
     return value;
   }
 
+  /// Stops when [visit] returns true. A permitted 404 returns null.
+  Future<bool?> _visitFilePages(
+    String query,
+    String fields,
+    bool Function(List<dynamic>) visit, {
+    String pageSize = '1000',
+    bool allowMissing = false,
+  }) async {
+    String? page;
+    do {
+      final response = await _request(
+        'GET',
+        _uri('/drive/v3/files', {
+          'q': query,
+          'fields': 'nextPageToken,files($fields)',
+          'pageSize': pageSize,
+          'pageToken': ?page,
+        }),
+      );
+      if (allowMissing && response.statusCode == 404) return null;
+      final result = _json(response);
+      final entries = result['files'];
+      if (entries is! List) throw const FormatException('Invalid Drive file list');
+      if (visit(entries)) return true;
+      final next = result['nextPageToken'];
+      if (next != null && next is! String) {
+        throw const FormatException('Invalid page token');
+      }
+      page = next as String?;
+    } while (page != null && page.isNotEmpty);
+    return false;
+  }
+
   Future<List<Map<String, dynamic>>> _list(
     String name,
     String parent, {
@@ -164,30 +197,14 @@ class GoogleDriveFileSaver {
     final q =
         "${folder ? "mimeType='$_folderMime' and " : ''}name='${_escape(name)}' and trashed=false and '${_escape(parent)}' in parents";
     final files = <Map<String, dynamic>>[];
-    String? page;
-    do {
-      final result = _json(
-        await _request(
-          'GET',
-          _uri('/drive/v3/files', {
-            'q': q,
-            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum,createdTime,ownedByMe,shared,appProperties)',
-            'pageSize': '1000',
-            'pageToken': ?page,
-          }),
-        ),
-      );
-      final entries = result['files'];
-      if (entries is! List) {
-        throw const FormatException('Invalid Drive file list');
-      }
-      files.addAll(entries.map((e) => Map<String, dynamic>.from(e as Map)));
-      final next = result['nextPageToken'];
-      if (next != null && next is! String) {
-        throw const FormatException('Invalid page token');
-      }
-      page = next as String?;
-    } while (page != null && page.isNotEmpty);
+    await _visitFilePages(
+      q,
+      'id,name,size,mimeType,md5Checksum,createdTime,ownedByMe,shared,appProperties',
+      (entries) {
+        files.addAll(entries.map((e) => Map<String, dynamic>.from(e as Map)));
+        return false;
+      },
+    );
     return files;
   }
 
@@ -244,33 +261,22 @@ class GoogleDriveFileSaver {
 
   Future<List<GoogleDriveFolder>> listFolders({String? currentId}) async {
     final entries = <String, Map<String, dynamic>>{};
-    String? page;
-    do {
-      final result = _json(
-        await _request('GET', _uri('/drive/v3/files', {
-          'q': "mimeType='$_folderMime' and trashed=false",
-          'fields': 'nextPageToken,files(id,name,parents,ownedByMe,shared)',
-          'pageSize': '1000',
-          'pageToken': ?page,
-        })),
-      );
-      final files = result['files'];
-      if (files is! List) throw const FormatException('Invalid Drive file list');
-      for (final item in files) {
-        final file = Map<String, dynamic>.from(item as Map);
-        if (file['ownedByMe'] == true && file['shared'] == false) {
-          if (file['name'] is! String) {
-            throw const FormatException('Missing Drive name');
+    await _visitFilePages(
+      "mimeType='$_folderMime' and trashed=false",
+      'id,name,parents,ownedByMe,shared',
+      (files) {
+        for (final item in files) {
+          final file = Map<String, dynamic>.from(item as Map);
+          if (file['ownedByMe'] == true && file['shared'] == false) {
+            if (file['name'] is! String) {
+              throw const FormatException('Missing Drive name');
+            }
+            entries[_id(file)] = file;
           }
-          entries[_id(file)] = file;
         }
-      }
-      final next = result['nextPageToken'];
-      if (next != null && next is! String) {
-        throw const FormatException('Invalid page token');
-      }
-      page = next as String?;
-    } while (page != null && page.isNotEmpty);
+        return false;
+      },
+    );
 
     final folders = <GoogleDriveFolder>[];
     for (final entry in entries.entries) {
@@ -405,31 +411,13 @@ class GoogleDriveFileSaver {
     }
   }
 
-  Future<bool?> _hasChildren(String folder) async {
-    String? page;
-    do {
-      final response = await _request(
-        'GET',
-        _uri('/drive/v3/files', {
-          'q': "'${_escape(folder)}' in parents and trashed=false",
-          'fields': 'nextPageToken,files(id)',
-          'pageSize': '1',
-          'pageToken': ?page,
-        }),
-      );
-      if (response.statusCode == 404) return null;
-      final result = _json(response);
-      final files = result['files'];
-      if (files is! List) throw const FormatException('Invalid Drive file list');
-      if (files.isNotEmpty) return true;
-      final next = result['nextPageToken'];
-      if (next != null && next is! String) {
-        throw const FormatException('Invalid page token');
-      }
-      page = next as String?;
-    } while (page != null && page.isNotEmpty);
-    return false;
-  }
+  Future<bool?> _hasChildren(String folder) => _visitFilePages(
+    "'${_escape(folder)}' in parents and trashed=false",
+    'id',
+    (files) => files.isNotEmpty,
+    pageSize: '1',
+    allowMissing: true,
+  );
 
   Future<bool> _isPrivateFolder(String id) async {
     final response = await _request(

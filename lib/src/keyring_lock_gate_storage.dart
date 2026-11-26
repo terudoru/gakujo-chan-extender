@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'secure_storage_transaction.dart';
+
 class KeyringLockGateStorage extends FlutterSecureStorage {
   KeyringLockGateStorage({
     required FlutterSecureStorage inner,
@@ -19,7 +21,7 @@ class KeyringLockGateStorage extends FlutterSecureStorage {
   final Future<void> Function()? beforeFirstAccess;
   Future<void>? _beforeFirstAccessFuture;
   bool _locked = false;
-  Future<void> _pendingStorageOperation = Future<void>.value();
+  final _operations = StorageOperationQueue();
 
   void reopen() {
     _locked = false;
@@ -35,7 +37,7 @@ class KeyringLockGateStorage extends FlutterSecureStorage {
     _throwIfLocked();
     // Startup callers can overlap; check again after the previous access so
     // cancelling one unlock prompt also blocks every queued access.
-    final next = _pendingStorageOperation.then((_) async {
+    return _operations.run(() async {
       _throwIfLocked();
       final beforeFirstAccess = this.beforeFirstAccess;
       if (beforeFirstAccess != null) {
@@ -51,11 +53,6 @@ class KeyringLockGateStorage extends FlutterSecureStorage {
         rethrow;
       }
     });
-    _pendingStorageOperation = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace _) {},
-    );
-    return next;
   }
 
   @override

@@ -53,6 +53,23 @@ void main() {
     expect(await progress.read(digest(3)), 12);
   });
 
+  test('a failed save does not block later writes on the same instance', () async {
+    final file = File.fromUri(directory.uri.resolve('unavailable'));
+    await file.writeAsString('A file occupies the intended directory path.');
+    final blockedDirectory = Directory(file.path);
+    final progress = GakujoPdfReadingProgress(directory: blockedDirectory);
+    await expectLater(
+      progress.save(digest(1), 7),
+      throwsA(isA<FileSystemException>()),
+    );
+
+    await file.delete();
+    await blockedDirectory.create();
+    await progress.save(digest(2), 9);
+    expect(await progress.read(digest(1)), isNull);
+    expect(await progress.read(digest(2)), 9);
+  });
+
   test(
     'limits stored progress to the most recently updated documents',
     () async {
