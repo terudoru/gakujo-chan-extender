@@ -24,6 +24,7 @@
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
 		216DBA7818ED4CE280232B02 /* NotificationHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 216DBA7818ED4CE280232B01 /* NotificationHistory.swift */; };
+		40229EF4A02747D786D10002 /* DownloadFileMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40229EF4A02747D786D10001 /* DownloadFileMatching.swift */; };
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
 		A10C4E872FC140EF00000001 /* MacosPdfPreviewWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10C4E872FC140EF00000002 /* MacosPdfPreviewWindow.swift */; };
 		33CC10F32044A3C60003C045 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F22044A3C60003C045 /* Assets.xcassets */; };
@@ -69,6 +70,7 @@
 		335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GeneratedPluginRegistrant.swift; sourceTree = "<group>"; };
 		33CC10ED2044A3C60003C045 /* morebettergakujo_flutter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "morebettergakujo_flutter.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		216DBA7818ED4CE280232B01 /* NotificationHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../darwin/NotificationHistory.swift; sourceTree = SOURCE_ROOT; };
+		40229EF4A02747D786D10001 /* DownloadFileMatching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../darwin/DownloadFileMatching.swift; sourceTree = SOURCE_ROOT; };
 		33CC10F02044A3C60003C045 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A10C4E872FC140EF00000002 /* MacosPdfPreviewWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacosPdfPreviewWindow.swift; sourceTree = "<group>"; };
 		33CC10F22044A3C60003C045 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Runner/Assets.xcassets; sourceTree = "<group>"; };
@@ -172,6 +174,7 @@
 			children = (
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				216DBA7818ED4CE280232B01 /* NotificationHistory.swift */,
+				40229EF4A02747D786D10001 /* DownloadFileMatching.swift */,
 				A10C4E872FC140EF00000002 /* MacosPdfPreviewWindow.swift */,
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
@@ -363,6 +366,7 @@
 				33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */,
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				216DBA7818ED4CE280232B02 /* NotificationHistory.swift in Sources */,
+				40229EF4A02747D786D10002 /* DownloadFileMatching.swift in Sources */,
 				A10C4E872FC140EF00000001 /* MacosPdfPreviewWindow.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 			);
