@@ -1,5 +1,9 @@
 import XCTest
+#if os(iOS)
+@testable import Runner
+#elseif os(macOS)
 @testable import More_Better_Gakujo
+#endif
 
 final class RunnerTests: XCTestCase {
   private let state = NotificationActivationHandoff()
@@ -101,6 +105,7 @@ final class RunnerTests: XCTestCase {
     XCTAssertEqual(state.takeLegacy(), "B")
   }
 
+  #if os(macOS)
   func testLaunchHookOrdersAndOrdinaryTapOfSameNotification() {
     for launchFirst in [true, false] {
       var hooks = NotificationLaunchPair()
@@ -116,4 +121,5 @@ final class RunnerTests: XCTestCase {
       XCTAssertTrue(hooks.acceptTap("request"))
     }
   }
+  #endif
 }
