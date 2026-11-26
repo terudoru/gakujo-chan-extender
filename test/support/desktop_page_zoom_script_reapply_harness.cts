@@ -1,11 +1,12 @@
 const vm: any = require('node:vm');
 const assert: any = require('node:assert/strict');
-const fs: any = require('node:fs');
 let script: string = process.argv[2];
 if (script === '--source') {
-  const ts = require('../../web_scripts/node_modules/typescript');
-  script = ts.transpileModule(fs.readFileSync('web_scripts/src/desktop_page_zoom/main.ts', 'utf8'),
-    {compilerOptions: {module: ts.ModuleKind.CommonJS}}).outputText;
+  const {buildSync} = require('../../web_scripts/node_modules/esbuild');
+  script = buildSync({
+    entryPoints: ['web_scripts/src/desktop_page_zoom/main.ts'],
+    bundle: true, format: 'iife', target: 'es2017', write: false,
+  }).outputFiles[0].text;
 }
 
 type TestMutation = {type: string; attributeName?: string};
@@ -182,8 +183,12 @@ function checkMixedResize(resizeInTop: boolean) {
 function checkReplacement() {
   const {win, timers, makeWindow, advanceTo, inject} = boot();
   const replacement = makeWindow('replacement');
-  win.frames[0] = replacement;
+  const inaccessibleChild = makeWindow('inaccessibleChild');
+  win.frames.splice(0, 1, {
+    get document() { throw new Error('cross origin'); }, frames: [inaccessibleChild],
+  }, replacement);
   win.load('IFRAME');
+  assert.equal(inaccessibleChild.loadListeners.length, 0);
   assert.equal(replacement.loadListeners.length, 1);
   const nested = makeWindow('nested');
   replacement.frames.push(nested);

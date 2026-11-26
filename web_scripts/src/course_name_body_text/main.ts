@@ -1,17 +1,11 @@
-export {};
+import { visitWindowFrames } from '../shared/visit_window_frames.js';
 function courseNameBodyText(): string {
   var texts: string[] = [];
-  function collect(win: Window) {
-    try {
-      if (win.document && win.document.body) {
-        texts.push(win.document.body.innerText || '');
-      }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (e) {}
-  }
-  collect(window);
+  visitWindowFrames(window, function(win) {
+    if (win.document && win.document.body) {
+      texts.push(win.document.body.innerText || '');
+    }
+  });
   return texts.join('\n\n');
 }
 

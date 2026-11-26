@@ -1,5 +1,6 @@
 import { messageOnclickUrl, readSmartphoneMessageRow } from '../shared/smartphone_message_rows.js';
 import { readAssignmentRows } from '../shared/assignment_rows.js';
+import { visitWindowFrames } from '../shared/visit_window_frames.js';
 
 function pageTextActivity() {
 
@@ -203,22 +204,16 @@ function pageTextActivity() {
     } catch (e) {}
     return rows;
   }
-  function collect(win: Window) {
-    try {
-      if (win.document && win.document.body) {
-        texts.push(win.document.body.innerText || '');
-        collectMessageItems(win.document);
-        var reportRows = collectReportRows(win.document);
-        if (reportRows.length) {
-          texts.push(reportRows.join('\n'));
-        }
+  visitWindowFrames(window, function(win) {
+    if (win.document && win.document.body) {
+      texts.push(win.document.body.innerText || '');
+      collectMessageItems(win.document);
+      var reportRows = collectReportRows(win.document);
+      if (reportRows.length) {
+        texts.push(reportRows.join('\n'));
       }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (e) {}
-  }
-  collect(window);
+    }
+  });
   return JSON.stringify({
     title: document.title || '',
     text: texts.join('\n'),

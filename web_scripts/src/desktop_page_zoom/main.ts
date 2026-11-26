@@ -1,4 +1,4 @@
-export {};
+import { visitWindowFrames } from '../shared/visit_window_frames.js';
 
 declare const __mbgConfig: { zoom: number; originX: number | null; originY: number | null };
 
@@ -21,18 +21,10 @@ function desktopPageZoom() {
 
   function allWindows() {
     var windows: (Window & typeof globalThis)[] = [];
-    function collect(win: Window & typeof globalThis) {
-      try {
-        if (!win || !win.document) {
-          return;
-        }
-        windows.push(win);
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i] as Window & typeof globalThis);
-        }
-      } catch (e) {}
-    }
-    collect(window);
+    visitWindowFrames(window, function(win) {
+      if (!win || !win.document) return false;
+      windows.push(win as Window & typeof globalThis);
+    });
     return windows;
   }
 

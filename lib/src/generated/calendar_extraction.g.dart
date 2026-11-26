@@ -6,6 +6,17 @@ const String gakujoCalendarExtractionJs = r'''
 (function() {
 "use strict";
 (() => {
+  // web_scripts/src/shared/visit_window_frames.ts
+  function visitWindowFrames(win, visit) {
+    try {
+      if (visit(win) === false) return;
+      for (var i = 0; i < win.frames.length; i += 1) {
+        visitWindowFrames(win.frames[i], visit);
+      }
+    } catch (_) {
+    }
+  }
+
   // web_scripts/src/calendar_extraction/main.ts
   function calendarExtraction() {
     var results = [];
@@ -753,41 +764,12 @@ const String gakujoCalendarExtractionJs = r'''
         }
       }
     }
-    function collect(win) {
-      try {
-        if (!win || !win.document) {
-          return;
-        }
-        var beforeStructuredRows = results.length;
-        scanCourseRows(win.document);
-        var addedStructuredRows = results.slice(beforeStructuredRows).some(function(course) {
-          return !!course.courseCode;
-        });
-        if (!addedStructuredRows) {
-          scanScheduleTables(win.document);
-        }
-        scanOfficialGoogleCalendarLinks(win.document);
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i]);
-        }
-      } catch (e) {
-      }
-    }
     function allPageText() {
       var texts = [];
-      function collectText(win) {
-        try {
-          if (!win || !win.document || !win.document.body) {
-            return;
-          }
-          texts.push(textOf(win.document.body));
-          for (var i = 0; i < win.frames.length; i += 1) {
-            collectText(win.frames[i]);
-          }
-        } catch (e) {
-        }
-      }
-      collectText(window);
+      visitWindowFrames(window, function(win) {
+        if (!win || !win.document || !win.document.body) return false;
+        texts.push(textOf(win.document.body));
+      });
       return texts.join("\n");
     }
     function termRangeTextFrom(pageText2) {
@@ -807,7 +789,18 @@ const String gakujoCalendarExtractionJs = r'''
       }
       return picked.join("\n");
     }
-    collect(window);
+    visitWindowFrames(window, function(win) {
+      if (!win || !win.document) return false;
+      var beforeStructuredRows = results.length;
+      scanCourseRows(win.document);
+      var addedStructuredRows = results.slice(beforeStructuredRows).some(function(course) {
+        return !!course.courseCode;
+      });
+      if (!addedStructuredRows) {
+        scanScheduleTables(win.document);
+      }
+      scanOfficialGoogleCalendarLinks(win.document);
+    });
     if (results.some(function(course) {
       return !!course.courseCode;
     })) {

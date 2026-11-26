@@ -100,6 +100,17 @@ const String gakujoPageTextActivityJs = r'''
     return rows;
   }
 
+  // web_scripts/src/shared/visit_window_frames.ts
+  function visitWindowFrames(win, visit) {
+    try {
+      if (visit(win) === false) return;
+      for (var i = 0; i < win.frames.length; i += 1) {
+        visitWindowFrames(win.frames[i], visit);
+      }
+    } catch (_) {
+    }
+  }
+
   // web_scripts/src/page_text_activity/main.ts
   function pageTextActivity() {
     var texts = [];
@@ -276,23 +287,16 @@ const String gakujoPageTextActivityJs = r'''
       }
       return rows;
     }
-    function collect(win) {
-      try {
-        if (win.document && win.document.body) {
-          texts.push(win.document.body.innerText || "");
-          collectMessageItems(win.document);
-          var reportRows = collectReportRows(win.document);
-          if (reportRows.length) {
-            texts.push(reportRows.join("\n"));
-          }
+    visitWindowFrames(window, function(win) {
+      if (win.document && win.document.body) {
+        texts.push(win.document.body.innerText || "");
+        collectMessageItems(win.document);
+        var reportRows = collectReportRows(win.document);
+        if (reportRows.length) {
+          texts.push(reportRows.join("\n"));
         }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i]);
-        }
-      } catch (e) {
       }
-    }
-    collect(window);
+    });
     return JSON.stringify({
       title: document.title || "",
       text: texts.join("\n"),

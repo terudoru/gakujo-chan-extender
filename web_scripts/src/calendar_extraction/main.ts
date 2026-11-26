@@ -1,4 +1,4 @@
-export {};
+import { visitWindowFrames } from '../shared/visit_window_frames.js';
 function calendarExtraction(): string {
   var results: MbgCalendarCourse[] = [];
   var seen: Record<string, boolean> = {};
@@ -848,39 +848,12 @@ function calendarExtraction(): string {
       }
     }
   }
-  function collect(win: Window) {
-    try {
-      if (!win || !win.document) {
-        return;
-      }
-      var beforeStructuredRows = results.length;
-      scanCourseRows(win.document);
-      var addedStructuredRows = results.slice(beforeStructuredRows).some(function(course) {
-        return !!course.courseCode;
-      });
-      if (!addedStructuredRows) {
-        scanScheduleTables(win.document);
-      }
-      scanOfficialGoogleCalendarLinks(win.document);
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (e) {}
-  }
   function allPageText() {
     var texts: string[] = [];
-    function collectText(win: Window) {
-      try {
-        if (!win || !win.document || !win.document.body) {
-          return;
-        }
-        texts.push(textOf(win.document.body));
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collectText(win.frames[i]);
-        }
-      } catch (e) {}
-    }
-    collectText(window);
+    visitWindowFrames(window, function(win) {
+      if (!win || !win.document || !win.document.body) return false;
+      texts.push(textOf(win.document.body));
+    });
     return texts.join('\n');
   }
   function termRangeTextFrom(pageText: string) {
@@ -901,7 +874,18 @@ function calendarExtraction(): string {
     }
     return picked.join('\n');
   }
-  collect(window);
+  visitWindowFrames(window, function(win) {
+    if (!win || !win.document) return false;
+    var beforeStructuredRows = results.length;
+    scanCourseRows(win.document);
+    var addedStructuredRows = results.slice(beforeStructuredRows).some(function(course) {
+      return !!course.courseCode;
+    });
+    if (!addedStructuredRows) {
+      scanScheduleTables(win.document);
+    }
+    scanOfficialGoogleCalendarLinks(win.document);
+  });
   if (results.some(function(course) { return !!course.courseCode; })) {
     results = results.filter(function(course) {
       return !!course.courseCode ||

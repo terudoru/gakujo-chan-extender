@@ -12,6 +12,17 @@ String gakujoDesktopPageZoomJs(Map<String, Object?> config) =>
 const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
+  // web_scripts/src/shared/visit_window_frames.ts
+  function visitWindowFrames(win, visit) {
+    try {
+      if (visit(win) === false) return;
+      for (var i = 0; i < win.frames.length; i += 1) {
+        visitWindowFrames(win.frames[i], visit);
+      }
+    } catch (_) {
+    }
+  }
+
   // web_scripts/src/desktop_page_zoom/main.ts
   function desktopPageZoom() {
     var version = 7;
@@ -29,19 +40,10 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
     }
     function allWindows() {
       var windows = [];
-      function collect(win) {
-        try {
-          if (!win || !win.document) {
-            return;
-          }
-          windows.push(win);
-          for (var i = 0; i < win.frames.length; i += 1) {
-            collect(win.frames[i]);
-          }
-        } catch (e) {
-        }
-      }
-      collect(window);
+      visitWindowFrames(window, function(win) {
+        if (!win || !win.document) return false;
+        windows.push(win);
+      });
       return windows;
     }
     function measuredSize(win) {
