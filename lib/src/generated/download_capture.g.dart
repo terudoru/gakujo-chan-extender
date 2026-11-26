@@ -35,38 +35,41 @@ const String gakujoDownloadCaptureJs = r'''
       return;
     }
     window.__MBG_DOWNLOAD_CAPTURE_VERSION = captureVersion;
-    if (window.__MBG_DOWNLOAD_CAPTURE_HANDLER && window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS) {
-      for (var oldDocIndex = 0; oldDocIndex < window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.length; oldDocIndex += 1) {
-        try {
-          window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
-            "click",
-            window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
-            true
-          );
-          window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
-            "submit",
-            window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER,
-            true
-          );
-        } catch (e) {
+    function detachHandlers() {
+      if (window.__MBG_DOWNLOAD_CAPTURE_HANDLER && window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS) {
+        for (var oldDocIndex = 0; oldDocIndex < window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.length; oldDocIndex += 1) {
+          try {
+            window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
+              "click",
+              window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
+              true
+            );
+            window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
+              "submit",
+              window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER,
+              true
+            );
+          } catch (e) {
+          }
         }
       }
-    }
-    window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
-    if (window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER && window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS) {
-      for (var oldLoadDocIndex = 0; oldLoadDocIndex < window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS.length; oldLoadDocIndex += 1) {
-        try {
-          window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS[oldLoadDocIndex].removeEventListener(
-            "load",
-            window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER,
-            true
-          );
-        } catch (e) {
+      window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
+      if (window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER && window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS) {
+        for (var oldLoadDocIndex = 0; oldLoadDocIndex < window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS.length; oldLoadDocIndex += 1) {
+          try {
+            window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS[oldLoadDocIndex].removeEventListener(
+              "load",
+              window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER,
+              true
+            );
+          } catch (e) {
+          }
         }
       }
+      window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
+      restoreFormSubmits();
     }
-    window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
-    restoreFormSubmits();
+    detachHandlers();
     var formSubmitters = /* @__PURE__ */ new WeakMap();
     function textOf(element) {
       if (!element) {
@@ -713,38 +716,7 @@ const String gakujoDownloadCaptureJs = r'''
       }
     };
     function attachClickHandlers() {
-      if (window.__MBG_DOWNLOAD_CAPTURE_HANDLER && window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS) {
-        for (var oldDocIndex2 = 0; oldDocIndex2 < window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.length; oldDocIndex2 += 1) {
-          try {
-            window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex2].removeEventListener(
-              "click",
-              window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
-              true
-            );
-            window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex2].removeEventListener(
-              "submit",
-              window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER,
-              true
-            );
-          } catch (e) {
-          }
-        }
-      }
-      window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
-      if (window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER && window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS) {
-        for (var oldLoadDocIndex2 = 0; oldLoadDocIndex2 < window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS.length; oldLoadDocIndex2 += 1) {
-          try {
-            window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS[oldLoadDocIndex2].removeEventListener(
-              "load",
-              window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER,
-              true
-            );
-          } catch (e) {
-          }
-        }
-      }
-      window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
-      restoreFormSubmits();
+      detachHandlers();
       var documents = collectDocuments();
       for (var i = 0; i < documents.length; i += 1) {
         try {

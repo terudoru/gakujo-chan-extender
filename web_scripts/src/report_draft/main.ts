@@ -68,9 +68,9 @@ function reportDraft() {
     return element.getClientRects().length > 0;
   }
 
-  function isIgnoredInput(input: DraftField) {
+  function isIgnoredInput(input: DraftField, legacy: boolean) {
     var type = (input.getAttribute('type') || 'text').toLowerCase();
-    if ([
+    if ((legacy && (type === 'checkbox' || type === 'radio')) || [
       'button', 'color', 'file', 'hidden', 'image', 'password',
       'range', 'reset', 'submit'
     ].indexOf(type) >= 0) {
@@ -89,21 +89,23 @@ function reportDraft() {
       metadata.indexOf('ninshocode') >= 0;
   }
 
-  function saveableFields(doc: DraftDocument) {
-    var fields: DraftField[] = Array.prototype.slice.call(
-      doc.querySelectorAll('textarea,input,select,[contenteditable]')
-    ).filter(function(field) {
+  function saveableFields(doc: DraftDocument, legacy = false) {
+    var candidates = legacy
+      ? doc.querySelectorAll('textarea,input,[contenteditable]')
+      : doc.querySelectorAll('textarea,input,select,[contenteditable]');
+    var fields: DraftField[] = Array.prototype.slice.call(candidates).filter(function(field) {
       if (!visible(field)) {
         return false;
       }
       if (field.matches('[contenteditable]')) {
         return field.getAttribute('contenteditable') !== 'false';
       }
+      if (legacy && field.tagName.toLowerCase() === 'textarea') return true;
       // Web Flow controls such as the list's _displayCount are not answers.
-      if (/^_/.test(field.getAttribute('name') || '')) {
+      if (!legacy && /^_/.test(field.getAttribute('name') || '')) {
         return false;
       }
-      return !isIgnoredInput(field);
+      return !isIgnoredInput(field, legacy);
     });
     return fields;
   }
@@ -122,11 +124,8 @@ function reportDraft() {
       });
   }
 
-  function pageTextWithoutFields(doc: DraftDocument) {
-    if (!doc.body) {
-      return '';
-    }
-    var clone = doc.body.cloneNode(true) as HTMLElement;
+  function textWithoutFields(root: HTMLElement, legacy: boolean) {
+    var clone = root.cloneNode(true) as HTMLElement;
     Array.prototype.slice.call(
       clone.querySelectorAll(
         'textarea,input,select,button,[contenteditable],#mbg-report-draft-status'
@@ -134,12 +133,17 @@ function reportDraft() {
     ).forEach(function(node) {
       node.remove();
     });
-    removeCounterElements(clone);
-    return compactText(clone.innerText || clone.textContent || '');
+    if (!legacy) removeCounterElements(clone);
+    return clone.innerText || clone.textContent || '';
   }
 
-  function stablePageTextForKey(doc: DraftDocument) {
-    return stripCounters(pageTextWithoutFields(doc))
+  function pageTextWithoutFields(doc: DraftDocument, legacy = false) {
+    return doc.body ? compactText(textWithoutFields(doc.body, legacy)) : '';
+  }
+
+  function stablePageTextForKey(doc: DraftDocument, legacy = false) {
+    var text = pageTextWithoutFields(doc, legacy);
+    return (legacy ? text : stripCounters(text))
       .replace(/残り約\s*[0-9０-９]+\s*分/g, '')
       .replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
       .replace(/[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
@@ -190,7 +194,7 @@ function reportDraft() {
     return reportContext && submissionContext;
   }
 
-  function labelFor(field: DraftField) {
+  function labelFor(field: DraftField, legacy = false) {
     var doc = field.ownerDocument as DraftDocument;
     var labels = [
       field.getAttribute('name'),
@@ -207,19 +211,12 @@ function reportDraft() {
         labels.push(label.innerText || label.textContent || '');
       }
     }
-    var row = field.parentElement &&
-      field.parentElement.closest('tr,div,p,li,section');
+    var row = (legacy ? field : field.parentElement)?.closest('tr,div,p,li,section');
     if (row) {
-      var rowClone = row.cloneNode(true) as HTMLElement;
-      Array.prototype.slice.call(
-        rowClone.querySelectorAll('textarea,input,select,button,[contenteditable],#mbg-report-draft-status')
-      ).forEach(function(node) {
-        node.remove();
-      });
-      removeCounterElements(rowClone);
-      labels.push(rowClone.innerText || rowClone.textContent || '');
+      labels.push(textWithoutFields(row as HTMLElement, legacy));
     }
-    return stripCounters(labels.filter(Boolean).join(' ')).substring(0, 120);
+    var text = labels.filter(Boolean).join(' ');
+    return (legacy ? compactText(text) : stripCounters(text)).substring(0, 120);
   }
 
   function fieldKind(field: DraftField) {
@@ -379,108 +376,15 @@ function reportDraft() {
     return rawPath ? rawKey : key;
   }
 
-  // v0.70.x identity rules must stay independent of v2's counters and choices.
+  // v0.70.x identities keep v1's field and counter rules.
   var legacyDraft = (function() {
     var prefix = 'mbg-report-draft:v1:';
-
-    function isIgnoredInput(input: DraftField) {
-      var type = (input.getAttribute('type') || 'text').toLowerCase();
-      if ([
-        'button', 'checkbox', 'color', 'file', 'hidden', 'image', 'password',
-        'radio', 'range', 'reset', 'submit'
-      ].indexOf(type) >= 0) {
-        return true;
-      }
-      var metadata = [
-        input.getAttribute('name'),
-        input.getAttribute('id'),
-        input.getAttribute('autocomplete'),
-        input.getAttribute('aria-label')
-      ].join(' ').toLowerCase();
-      return metadata.indexOf('password') >= 0 ||
-        metadata.indexOf('login') >= 0 ||
-        metadata.indexOf('userid') >= 0 ||
-        metadata.indexOf('username') >= 0 ||
-        metadata.indexOf('ninshocode') >= 0;
-    }
-
-    function saveableFields(doc: DraftDocument) {
-      var fields: DraftField[] = Array.prototype.slice.call(
-        doc.querySelectorAll('textarea,input,[contenteditable]')
-      ).filter(function(field) {
-        if (!visible(field)) {
-          return false;
-        }
-        if (field.matches('[contenteditable]')) {
-          return field.getAttribute('contenteditable') !== 'false';
-        }
-        if (field.tagName.toLowerCase() === 'textarea') {
-          return true;
-        }
-        return field.tagName.toLowerCase() === 'input' && !isIgnoredInput(field);
-      });
-      return fields;
-    }
-
-    function pageTextWithoutFields(doc: DraftDocument) {
-      if (!doc.body) {
-        return '';
-      }
-      var clone = doc.body.cloneNode(true) as HTMLElement;
-      Array.prototype.slice.call(
-        clone.querySelectorAll(
-          'textarea,input,select,button,[contenteditable],#mbg-report-draft-status'
-        )
-      ).forEach(function(node) {
-        node.remove();
-      });
-      return compactText(clone.innerText || clone.textContent || '');
-    }
-
-    function stablePageTextForKey(doc: DraftDocument) {
-      return pageTextWithoutFields(doc)
-        .replace(/残り約\s*[0-9０-９]+\s*分/g, '')
-        .replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
-        .replace(/[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-
-    function labelFor(field: DraftField) {
-      var doc = field.ownerDocument as DraftDocument;
-      var labels = [
-        field.getAttribute('name'),
-        field.getAttribute('id'),
-        field.getAttribute('aria-label'),
-        field.getAttribute('title'),
-        field.getAttribute('placeholder')
-      ];
-      if (field.id && doc.defaultView.CSS && doc.defaultView.CSS.escape) {
-        var label = doc.querySelector<HTMLElement>(
-          'label[for="' + doc.defaultView.CSS.escape(field.id) + '"]'
-        );
-        if (label) {
-          labels.push(label.innerText || label.textContent || '');
-        }
-      }
-      var row = field.closest('tr,div,p,li,section');
-      if (row) {
-        var rowClone = row.cloneNode(true) as HTMLElement;
-        Array.prototype.slice.call(
-          rowClone.querySelectorAll('textarea,input,select,button,[contenteditable],#mbg-report-draft-status')
-        ).forEach(function(node) {
-          node.remove();
-        });
-        labels.push(rowClone.innerText || rowClone.textContent || '');
-      }
-      return compactText(labels.filter(Boolean).join(' ')).substring(0, 120);
-    }
 
     function fieldKey(field: DraftField, index: number) {
       return [
         field.tagName.toLowerCase(),
         (field.getAttribute('type') || '').toLowerCase(),
-        labelFor(field),
+        labelFor(field, true),
         index
       ].join('|');
     }
@@ -505,8 +409,8 @@ function reportDraft() {
       var signature = [
         path,
         doc.title || '',
-        stablePageTextForKey(doc).substring(0, 4000),
-        fields.map(labelFor).join('|')
+        stablePageTextForKey(doc, true).substring(0, 4000),
+        fields.map(function(field) { return labelFor(field, true); }).join('|')
       ].join('\n');
       var keys = [prefix + hashString(signature)];
       // The counter appears in the page text and in the field labels.
@@ -524,7 +428,9 @@ function reportDraft() {
     }
 
     return {
-      keys: legacyDraftKeys, fields: saveableFields, fieldKey: fieldKey,
+      keys: legacyDraftKeys,
+      fields: function(doc: DraftDocument) { return saveableFields(doc, true); },
+      fieldKey: fieldKey,
       zeroCounters: zeroCounters
     };
   })();

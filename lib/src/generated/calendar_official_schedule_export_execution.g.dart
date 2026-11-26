@@ -15,63 +15,66 @@ const String _gakujoCalendarOfficialScheduleExportExecutionJsPrefix =
     r'''(function(__mbgConfig) {
 "use strict";
 (() => {
+  // web_scripts/src/shared/calendar_export_form.ts
+  function textOf(node) {
+    if (!node) return "";
+    return [
+      node.innerText || node.textContent || "",
+      node.value || "",
+      node.name || "",
+      node.id || "",
+      node.className || "",
+      node.getAttribute && node.getAttribute("onclick") || "",
+      node.getAttribute && node.getAttribute("href") || "",
+      node.getAttribute && node.getAttribute("title") || ""
+    ].join(" ").replace(/\s+/g, " ").trim();
+  }
+  function normalize(text) {
+    return String(text || "").replace(/\s+/g, "").toLowerCase();
+  }
+  function isExportForm(form) {
+    var value = normalize(textOf(form));
+    return value.indexOf("scheduleexportform") >= 0 || value.indexOf("カテゴリ") >= 0 && value.indexOf("対象期間") >= 0 && value.indexOf("時間割コマ情報") >= 0;
+  }
+  function notifyInputChange(input) {
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function configureInputs(form, startDate, endDate, notifyCategories) {
+    var dates = Array.from(form.querySelectorAll("input")).filter(function(input) {
+      var type = String(input.getAttribute("type") || "text").toLowerCase();
+      return !["hidden", "button", "submit", "checkbox", "radio", "image"].includes(type);
+    });
+    [startDate, endDate].forEach(function(value, index) {
+      var input = dates[index];
+      if (input && value) {
+        input.value = value;
+        notifyInputChange(input);
+      }
+    });
+    for (var checkbox of Array.from(form.querySelectorAll('input[type="checkbox"]'))) {
+      checkbox.checked = checkbox.name === "check2" || checkbox.id === "check21";
+      if (notifyCategories) notifyInputChange(checkbox);
+    }
+  }
+  function diagnosticsFor(doc, form) {
+    return {
+      url: String(doc.location.href || "").split("?")[0],
+      title: doc.title || "",
+      formTextLength: textOf(form).length,
+      controls: Array.from(
+        form.querySelectorAll("button,input,a,[onclick]")
+      ).slice(0, 32).map(function(control) {
+        return String(control.tagName || "").toLowerCase() + ":" + textOf(control).slice(0, 120);
+      })
+    };
+  }
+
   // web_scripts/src/calendar_official_schedule_export_execution/main.ts
   function calendarOfficialScheduleExportExecution() {
     var shouldActivate = __mbgConfig.shouldActivate;
     var startDate = __mbgConfig.startDate;
     var endDate = __mbgConfig.endDate;
-    function textOf(node) {
-      if (!node) {
-        return "";
-      }
-      return [
-        node.innerText || node.textContent || "",
-        node.value || "",
-        node.name || "",
-        node.id || "",
-        node.className || "",
-        node.getAttribute && node.getAttribute("onclick") || "",
-        node.getAttribute && node.getAttribute("href") || "",
-        node.getAttribute && node.getAttribute("title") || ""
-      ].join(" ").replace(/\s+/g, " ").trim();
-    }
-    function normalize(text) {
-      return String(text || "").replace(/\s+/g, "").toLowerCase();
-    }
-    function isExportForm(form) {
-      var value = normalize(textOf(form));
-      return value.indexOf("scheduleexportform") >= 0 || value.indexOf("カテゴリ") >= 0 && value.indexOf("対象期間") >= 0 && value.indexOf("時間割コマ情報") >= 0;
-    }
-    function visibleDateInputs(form) {
-      return Array.prototype.slice.call(
-        form.querySelectorAll("input")
-      ).filter(function(input) {
-        var type = String(input.getAttribute("type") || "text").toLowerCase();
-        if (type === "hidden" || type === "button" || type === "submit" || type === "checkbox" || type === "radio" || type === "image") {
-          return false;
-        }
-        return true;
-      });
-    }
-    function setDateValue(input, value) {
-      if (!input || !value) {
-        return;
-      }
-      input.value = value;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-    function configureCategories(form) {
-      var checkboxes = Array.prototype.slice.call(
-        form.querySelectorAll('input[type="checkbox"]')
-      );
-      for (var i = 0; i < checkboxes.length; i += 1) {
-        var checkbox = checkboxes[i];
-        checkbox.checked = checkbox.name === "check2" || checkbox.id === "check21";
-        checkbox.dispatchEvent(new Event("input", { bubbles: true }));
-        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    }
     function exportButton(form) {
       var controls = Array.prototype.slice.call(
         form.querySelectorAll("button,input,a,[onclick]")
@@ -92,19 +95,6 @@ const String _gakujoCalendarOfficialScheduleExportExecutionJsPrefix =
       }
       return null;
     }
-    function diagnosticsFor(doc, form) {
-      var controls = Array.prototype.slice.call(
-        form.querySelectorAll("button,input,a,[onclick]")
-      );
-      return {
-        url: String(doc.location.href || "").split("?")[0],
-        title: doc.title || "",
-        formTextLength: textOf(form).length,
-        controls: controls.slice(0, 32).map(function(control) {
-          return String(control.tagName || "").toLowerCase() + ":" + textOf(control).slice(0, 120);
-        })
-      };
-    }
     function inspectDocument(doc) {
       var forms = Array.prototype.slice.call(doc.querySelectorAll("form"));
       var missingCandidate = null;
@@ -113,10 +103,7 @@ const String _gakujoCalendarOfficialScheduleExportExecutionJsPrefix =
         if (!isExportForm(form)) {
           continue;
         }
-        var dates = visibleDateInputs(form);
-        setDateValue(dates[0], startDate);
-        setDateValue(dates[1], endDate);
-        configureCategories(form);
+        configureInputs(form, startDate, endDate, true);
         var eventId = form.querySelector('input[name="_eventId"]');
         if (eventId && !eventId.value) {
           eventId.value = "executeExport";

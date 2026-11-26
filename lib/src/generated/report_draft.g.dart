@@ -214,9 +214,9 @@ const String gakujoReportDraftJs = r'''
       }
       return element.getClientRects().length > 0;
     }
-    function isIgnoredInput(input) {
+    function isIgnoredInput(input, legacy) {
       var type = (input.getAttribute("type") || "text").toLowerCase();
-      if ([
+      if (legacy && (type === "checkbox" || type === "radio") || [
         "button",
         "color",
         "file",
@@ -237,20 +237,20 @@ const String gakujoReportDraftJs = r'''
       ].join(" ").toLowerCase();
       return metadata.indexOf("password") >= 0 || metadata.indexOf("login") >= 0 || metadata.indexOf("userid") >= 0 || metadata.indexOf("username") >= 0 || metadata.indexOf("ninshocode") >= 0;
     }
-    function saveableFields(doc) {
-      var fields = Array.prototype.slice.call(
-        doc.querySelectorAll("textarea,input,select,[contenteditable]")
-      ).filter(function(field) {
+    function saveableFields(doc, legacy = false) {
+      var candidates = legacy ? doc.querySelectorAll("textarea,input,[contenteditable]") : doc.querySelectorAll("textarea,input,select,[contenteditable]");
+      var fields = Array.prototype.slice.call(candidates).filter(function(field) {
         if (!visible(field)) {
           return false;
         }
         if (field.matches("[contenteditable]")) {
           return field.getAttribute("contenteditable") !== "false";
         }
-        if (/^_/.test(field.getAttribute("name") || "")) {
+        if (legacy && field.tagName.toLowerCase() === "textarea") return true;
+        if (!legacy && /^_/.test(field.getAttribute("name") || "")) {
           return false;
         }
-        return !isIgnoredInput(field);
+        return !isIgnoredInput(field, legacy);
       });
       return fields;
     }
@@ -262,11 +262,8 @@ const String gakujoReportDraftJs = r'''
         if (/count/i.test((node.getAttribute("id") || "") + " " + (node.getAttribute("class") || ""))) node.remove();
       });
     }
-    function pageTextWithoutFields(doc) {
-      if (!doc.body) {
-        return "";
-      }
-      var clone = doc.body.cloneNode(true);
+    function textWithoutFields(root, legacy) {
+      var clone = root.cloneNode(true);
       Array.prototype.slice.call(
         clone.querySelectorAll(
           "textarea,input,select,button,[contenteditable],#mbg-report-draft-status"
@@ -274,11 +271,15 @@ const String gakujoReportDraftJs = r'''
       ).forEach(function(node) {
         node.remove();
       });
-      removeCounterElements(clone);
-      return compactText(clone.innerText || clone.textContent || "");
+      if (!legacy) removeCounterElements(clone);
+      return clone.innerText || clone.textContent || "";
     }
-    function stablePageTextForKey(doc) {
-      return stripCounters(pageTextWithoutFields(doc)).replace(/残り約\s*[0-9０-９]+\s*分/g, "").replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, "").replace(/[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, "").replace(/\s+/g, " ").trim();
+    function pageTextWithoutFields(doc, legacy = false) {
+      return doc.body ? compactText(textWithoutFields(doc.body, legacy)) : "";
+    }
+    function stablePageTextForKey(doc, legacy = false) {
+      var text = pageTextWithoutFields(doc, legacy);
+      return (legacy ? text : stripCounters(text)).replace(/残り約\s*[0-9０-９]+\s*分/g, "").replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, "").replace(/[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, "").replace(/\s+/g, " ").trim();
     }
     function looksLikeReportSubmission(doc, fields) {
       if (!fields.length) {
@@ -311,7 +312,8 @@ const String gakujoReportDraftJs = r'''
       var submissionContext = /提出(?!日|期限)/.test(text) || text.indexOf("回答") >= 0 || text.indexOf("解答") >= 0 || text.indexOf("入力") >= 0 || text.indexOf("本文") >= 0 || text.indexOf("コメント") >= 0;
       return reportContext && submissionContext;
     }
-    function labelFor(field) {
+    function labelFor(field, legacy = false) {
+      var _a;
       var doc = field.ownerDocument;
       var labels = [
         field.getAttribute("name"),
@@ -328,18 +330,12 @@ const String gakujoReportDraftJs = r'''
           labels.push(label.innerText || label.textContent || "");
         }
       }
-      var row = field.parentElement && field.parentElement.closest("tr,div,p,li,section");
+      var row = (_a = legacy ? field : field.parentElement) == null ? void 0 : _a.closest("tr,div,p,li,section");
       if (row) {
-        var rowClone = row.cloneNode(true);
-        Array.prototype.slice.call(
-          rowClone.querySelectorAll("textarea,input,select,button,[contenteditable],#mbg-report-draft-status")
-        ).forEach(function(node) {
-          node.remove();
-        });
-        removeCounterElements(rowClone);
-        labels.push(rowClone.innerText || rowClone.textContent || "");
+        labels.push(textWithoutFields(row, legacy));
       }
-      return stripCounters(labels.filter(Boolean).join(" ")).substring(0, 120);
+      var text = labels.filter(Boolean).join(" ");
+      return (legacy ? compactText(text) : stripCounters(text)).substring(0, 120);
     }
     function fieldKind(field) {
       if (field.tagName.toLowerCase() === "select") return "select";
@@ -490,99 +486,11 @@ const String gakujoReportDraftJs = r'''
     }
     var legacyDraft = /* @__PURE__ */ (function() {
       var prefix2 = "mbg-report-draft:v1:";
-      function isIgnoredInput2(input) {
-        var type = (input.getAttribute("type") || "text").toLowerCase();
-        if ([
-          "button",
-          "checkbox",
-          "color",
-          "file",
-          "hidden",
-          "image",
-          "password",
-          "radio",
-          "range",
-          "reset",
-          "submit"
-        ].indexOf(type) >= 0) {
-          return true;
-        }
-        var metadata = [
-          input.getAttribute("name"),
-          input.getAttribute("id"),
-          input.getAttribute("autocomplete"),
-          input.getAttribute("aria-label")
-        ].join(" ").toLowerCase();
-        return metadata.indexOf("password") >= 0 || metadata.indexOf("login") >= 0 || metadata.indexOf("userid") >= 0 || metadata.indexOf("username") >= 0 || metadata.indexOf("ninshocode") >= 0;
-      }
-      function saveableFields2(doc) {
-        var fields = Array.prototype.slice.call(
-          doc.querySelectorAll("textarea,input,[contenteditable]")
-        ).filter(function(field) {
-          if (!visible(field)) {
-            return false;
-          }
-          if (field.matches("[contenteditable]")) {
-            return field.getAttribute("contenteditable") !== "false";
-          }
-          if (field.tagName.toLowerCase() === "textarea") {
-            return true;
-          }
-          return field.tagName.toLowerCase() === "input" && !isIgnoredInput2(field);
-        });
-        return fields;
-      }
-      function pageTextWithoutFields2(doc) {
-        if (!doc.body) {
-          return "";
-        }
-        var clone = doc.body.cloneNode(true);
-        Array.prototype.slice.call(
-          clone.querySelectorAll(
-            "textarea,input,select,button,[contenteditable],#mbg-report-draft-status"
-          )
-        ).forEach(function(node) {
-          node.remove();
-        });
-        return compactText(clone.innerText || clone.textContent || "");
-      }
-      function stablePageTextForKey2(doc) {
-        return pageTextWithoutFields2(doc).replace(/残り約\s*[0-9０-９]+\s*分/g, "").replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, "").replace(/[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, "").replace(/\s+/g, " ").trim();
-      }
-      function labelFor2(field) {
-        var doc = field.ownerDocument;
-        var labels = [
-          field.getAttribute("name"),
-          field.getAttribute("id"),
-          field.getAttribute("aria-label"),
-          field.getAttribute("title"),
-          field.getAttribute("placeholder")
-        ];
-        if (field.id && doc.defaultView.CSS && doc.defaultView.CSS.escape) {
-          var label = doc.querySelector(
-            'label[for="' + doc.defaultView.CSS.escape(field.id) + '"]'
-          );
-          if (label) {
-            labels.push(label.innerText || label.textContent || "");
-          }
-        }
-        var row = field.closest("tr,div,p,li,section");
-        if (row) {
-          var rowClone = row.cloneNode(true);
-          Array.prototype.slice.call(
-            rowClone.querySelectorAll("textarea,input,select,button,[contenteditable],#mbg-report-draft-status")
-          ).forEach(function(node) {
-            node.remove();
-          });
-          labels.push(rowClone.innerText || rowClone.textContent || "");
-        }
-        return compactText(labels.filter(Boolean).join(" ")).substring(0, 120);
-      }
       function fieldKey2(field, index) {
         return [
           field.tagName.toLowerCase(),
           (field.getAttribute("type") || "").toLowerCase(),
-          labelFor2(field),
+          labelFor(field, true),
           index
         ].join("|");
       }
@@ -599,8 +507,10 @@ const String gakujoReportDraftJs = r'''
         var signature = [
           path,
           doc.title || "",
-          stablePageTextForKey2(doc).substring(0, 4e3),
-          fields.map(labelFor2).join("|")
+          stablePageTextForKey(doc, true).substring(0, 4e3),
+          fields.map(function(field) {
+            return labelFor(field, true);
+          }).join("|")
         ].join("\n");
         var keys = [prefix2 + hashString(signature)];
         var pattern = /(入力文字数[:：]?\s*)[0-9０-９]+(\s*\/\s*)([0-9]+)/g;
@@ -617,7 +527,9 @@ const String gakujoReportDraftJs = r'''
       }
       return {
         keys: legacyDraftKeys,
-        fields: saveableFields2,
+        fields: function(doc) {
+          return saveableFields(doc, true);
+        },
         fieldKey: fieldKey2,
         zeroCounters
       };

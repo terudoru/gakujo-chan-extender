@@ -1,88 +1,16 @@
-export {};
+import { configureInputs, diagnosticsFor, isExportForm, textOf } from '../shared/calendar_export_form.js';
 
 declare const __mbgConfig: { startDate: string; endDate: string };
 
 function calendarOfficialScheduleExportFetch() {
   var startDate = __mbgConfig.startDate;
   var endDate = __mbgConfig.endDate;
-  function textOf(node: HTMLElement & { value?: string; name?: string }) {
-    if (!node) {
-      return '';
-    }
-    return [
-      node.innerText || node.textContent || '',
-      node.value || '',
-      node.name || '',
-      node.id || '',
-      node.className || '',
-      node.getAttribute && node.getAttribute('onclick') || '',
-      node.getAttribute && node.getAttribute('href') || '',
-      node.getAttribute && node.getAttribute('title') || ''
-    ].join(' ').replace(/\s+/g, ' ').trim();
-  }
-  function normalize(text: string) {
-    return String(text || '').replace(/\s+/g, '').toLowerCase();
-  }
-  function isExportForm(form: HTMLFormElement) {
-    var value = normalize(textOf(form));
-    return value.indexOf('scheduleexportform') >= 0 ||
-      (value.indexOf('カテゴリ') >= 0 &&
-       value.indexOf('対象期間') >= 0 &&
-       value.indexOf('時間割コマ情報') >= 0);
-  }
-  function visibleDateInputs(form: HTMLFormElement) {
-    return Array.prototype.slice.call(
-      form.querySelectorAll('input')
-    ).filter(function(input) {
-      var type = String(input.getAttribute('type') || 'text').toLowerCase();
-      return type !== 'hidden' &&
-        type !== 'button' &&
-        type !== 'submit' &&
-        type !== 'checkbox' &&
-        type !== 'radio' &&
-        type !== 'image';
-    });
-  }
-  function setDateValue(input: HTMLInputElement, value: string) {
-    if (!input || !value) {
-      return;
-    }
-    input.value = value;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  function configureCategories(form: HTMLFormElement) {
-    var checkboxes = Array.prototype.slice.call(
-      form.querySelectorAll('input[type="checkbox"]')
-    );
-    for (var i = 0; i < checkboxes.length; i += 1) {
-      var checkbox = checkboxes[i];
-      checkbox.checked = checkbox.name === 'check2' ||
-        checkbox.id === 'check21';
-    }
-  }
   function configureForm(form: HTMLFormElement) {
-    var dates = visibleDateInputs(form);
-    setDateValue(dates[0], startDate);
-    setDateValue(dates[1], endDate);
-    configureCategories(form);
+    configureInputs(form, startDate, endDate, false);
     var eventId = form.querySelector<HTMLInputElement>('input[name="_eventId"]');
     if (eventId) {
       eventId.value = 'executeExport';
     }
-  }
-  function diagnosticsFor(doc: Document, form: HTMLFormElement) {
-    return {
-      url: String(doc.location.href || '').split('?')[0],
-      title: doc.title || '',
-      formTextLength: textOf(form).length,
-      controls: Array.prototype.slice.call(
-        form.querySelectorAll('button,input,a,[onclick]')
-      ).slice(0, 32).map(function(control) {
-        return String(control.tagName || '').toLowerCase() + ':' +
-          textOf(control).slice(0, 120);
-      })
-    };
   }
   function exportFileAfter(xhr: XMLHttpRequest) {
     // Gakujo answers the export with a progress page whose meta refresh
