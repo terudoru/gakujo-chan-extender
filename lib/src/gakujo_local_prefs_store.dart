@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import 'atomic_json_file.dart';
 import 'gakujo_app_settings.dart';
 
 class GakujoLocalPrefs {
@@ -169,31 +170,7 @@ class GakujoLocalPrefsStore {
   }
 
   Future<void> _writeJson(Map<String, Object?> value) async {
-    final file = await _file();
-    await file.parent.create(recursive: true);
-    final temporaryFile = File(
-      '${file.path}.$pid.${DateTime.now().microsecondsSinceEpoch}.tmp',
-    );
-    try {
-      await temporaryFile.writeAsString(
-        jsonEncode(value),
-        flush: true,
-      );
-      final atomicReplace = _atomicReplace;
-      if (atomicReplace == null) {
-        await temporaryFile.rename(file.path);
-      } else {
-        await atomicReplace(temporaryFile, file);
-      }
-    } finally {
-      try {
-        if (await temporaryFile.exists()) {
-          await temporaryFile.delete();
-        }
-      } on FileSystemException {
-        // A failed cleanup must not hide the original write/replace failure.
-      }
-    }
+    await writeAtomicJsonFile(await _file(), value, atomicReplace: _atomicReplace);
   }
 
   Future<File> _file() async {

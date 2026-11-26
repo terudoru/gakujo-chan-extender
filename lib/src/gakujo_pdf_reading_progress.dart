@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import 'atomic_json_file.dart';
+
 /// Stores page numbers by document digest on this device.
 class GakujoPdfReadingProgress {
   GakujoPdfReadingProgress({this._directory});
@@ -37,7 +39,7 @@ class GakujoPdfReadingProgress {
         ..remove(key)
         ..[key] = page;
       _trim(pages);
-      await _write(file, pages);
+      await writeAtomicJsonFile(file, pages);
     });
   }
 
@@ -96,23 +98,6 @@ class GakujoPdfReadingProgress {
       await input.close();
     }
     return pages;
-  }
-
-  Future<void> _write(File file, Map<String, int> pages) async {
-    await file.parent.create(recursive: true);
-    final temporaryFile = File(
-      '${file.path}.$pid.${DateTime.now().microsecondsSinceEpoch}.tmp',
-    );
-    try {
-      await temporaryFile.writeAsString(jsonEncode(pages), flush: true);
-      await temporaryFile.rename(file.path);
-    } finally {
-      try {
-        if (await temporaryFile.exists()) await temporaryFile.delete();
-      } on FileSystemException {
-        // Keep a write or rename error visible to the caller.
-      }
-    }
   }
 
   Future<File> _file() async {
