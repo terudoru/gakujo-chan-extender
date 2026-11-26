@@ -11,6 +11,7 @@
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		216DBA7818ED4CE280232B02 /* NotificationHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 216DBA7818ED4CE280232B01 /* NotificationHistory.swift */; };
+		9B7826C04F2D415BB63ECB02 /* AppleNotificationsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B7826C04F2D415BB63ECB01 /* AppleNotificationsBridge.swift */; };
 		A1C4A1E6CAB24C52B0A13202 /* AppleCalendarBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C4A1E6CAB24C52B0A13201 /* AppleCalendarBridge.swift */; };
 		40229EF4A02747D786D10002 /* DownloadFileMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40229EF4A02747D786D10001 /* DownloadFileMatching.swift */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
@@ -53,6 +54,7 @@
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		216DBA7818ED4CE280232B01 /* NotificationHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../darwin/NotificationHistory.swift; sourceTree = SOURCE_ROOT; };
+		9B7826C04F2D415BB63ECB01 /* AppleNotificationsBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../darwin/AppleNotificationsBridge.swift; sourceTree = SOURCE_ROOT; };
 		A1C4A1E6CAB24C52B0A13201 /* AppleCalendarBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../darwin/AppleCalendarBridge.swift; sourceTree = SOURCE_ROOT; };
 		40229EF4A02747D786D10001 /* DownloadFileMatching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../darwin/DownloadFileMatching.swift; sourceTree = SOURCE_ROOT; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -135,6 +137,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				216DBA7818ED4CE280232B01 /* NotificationHistory.swift */,
+				9B7826C04F2D415BB63ECB01 /* AppleNotificationsBridge.swift */,
 				A1C4A1E6CAB24C52B0A13201 /* AppleCalendarBridge.swift */,
 				40229EF4A02747D786D10001 /* DownloadFileMatching.swift */,
 				4BD725F10000000000000002 /* DriveFolderPicker.swift */,
@@ -299,6 +302,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				216DBA7818ED4CE280232B02 /* NotificationHistory.swift in Sources */,
+				9B7826C04F2D415BB63ECB02 /* AppleNotificationsBridge.swift in Sources */,
 				A1C4A1E6CAB24C52B0A13202 /* AppleCalendarBridge.swift in Sources */,
 				40229EF4A02747D786D10002 /* DownloadFileMatching.swift in Sources */,
 				4BD725F10000000000000001 /* DriveFolderPicker.swift in Sources */,
