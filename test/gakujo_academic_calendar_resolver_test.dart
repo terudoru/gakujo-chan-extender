@@ -4,22 +4,63 @@ import 'dart:typed_data';
 
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar_resolver.dart';
+import 'package:pdf_cos/pdf_cos.dart';
 import 'package:test/test.dart';
 
 void main() {
+  final exceedsLimits = isA<FormatException>().having(
+    (error) => error.message,
+    'message',
+    'Calendar PDF exceeds processing limits',
+  );
+
   test('calendar PDF rejects oversized operand sequences', () {
     expect(
-      () => GakujoAcademicCalendarPdfParser.textLinesFromContentStream(
-        '${'1 ' * 4097}Tj', const {},
-      ),
-      throwsFormatException,
+      () => _parsePdf(_calendarPdf(['BT ${'1 ' * 4097}Tj ET'])),
+      throwsA(exceedsLimits),
     );
-    expect(
-      GakujoAcademicCalendarPdfParser.textLinesFromContentStream(
-        'BT 1 0 0 1 10 20 Tm (Hello) Tj ET', const {},
-      ),
-      ['Hello'],
+  });
+
+  test('reads only pages headed with the requested academic year', () async {
+    const ranges = [
+      '第１ターム 4月8日～6月8日',
+      '第２ターム 6月10日～8月5日',
+      '第３ターム 10月2日～12月1日',
+      '第４ターム 12月3日～2月12日',
+    ];
+    final bytes = _calendarPdf([
+      _pageContent(['令和８年度 新潟大学授業暦', '4/27 水曜授業振替', ...ranges]),
+      _pageContent(['令和７年度 新潟大学授業暦', '5/1 月曜授業振替', ...ranges]),
+      _pageContent(['2025年度（2025）新潟大学授業暦', '5/7 火曜授業振替']),
+      _pageContent(['5/2 木曜授業振替']),
+    ]);
+    final resolver = GakujoAcademicCalendarResolver(
+      fetchHtml: (_) async => '<a href="/2025.pdf">2025年度</a>',
+      fetchBytes: (_) async => bytes,
     );
+    final terms = await resolver.fetchTermsForAcademicYear(2025);
+    expect(terms, hasLength(4));
+    expect(terms.last.end, DateTime(2026, 2, 12));
+    expect(terms.first.classDaySwaps, [
+      GakujoClassDaySwap(date: DateTime(2025, 5, 1), weekday: DateTime.monday),
+      GakujoClassDaySwap(date: DateTime(2025, 5, 7), weekday: DateTime.tuesday),
+    ]);
+    expect(_parsePdf(bytes, academicYear: 2027), isEmpty);
+  });
+
+  test('uses ActualText fallback only from the selected page', () {
+    const dates = [6, 10, 8, 5, 10, 2, 12, 1, 12, 3, 2, 12, 4, 8, 6, 8];
+    final markedDates = [
+      for (final value in dates) '/Span << /ActualText ($value) >> BDC EMC',
+    ].join('\n');
+    final bytes = _calendarPdf([
+      _pageContent(['令和７年度 新潟大学授業暦']),
+      '${_pageContent(['令和８年度 新潟大学授業暦'])}\n$markedDates',
+    ]);
+    final terms = _parsePdf(bytes);
+    expect(terms, hasLength(4));
+    expect(terms.first.start, DateTime(2026, 4, 8));
+    expect(_parsePdf(bytes, academicYear: 2025), isEmpty);
   });
   test('rejects untrusted calendar PDF destinations', () {
     for (final url in [
@@ -35,28 +76,19 @@ void main() {
 
   test('rejects oversized PDF and unbounded character map ranges', () {
     expect(
-      () => GakujoAcademicCalendarPdfParser.extractText(
-        Uint8List(GakujoAcademicCalendarResolver.maxResponseBytes + 1),
-      ),
-      throwsFormatException,
+      () => _parsePdf(Uint8List(GakujoAcademicCalendarResolver.maxResponseBytes + 1)),
+      throwsA(exceedsLimits),
     );
-    final content = ascii.encode('beginbfrange\n<0000> <FFFFF> <0001>\nendbfrange');
-    final bytes = Uint8List.fromList([
-      ...ascii.encode('1 0 obj << /Filter /FlateDecode >>\nstream\n'),
-      ...zlib.encode(content),
-      ...ascii.encode('\nendstream\nendobj'),
-    ]);
-    expect(() => GakujoAcademicCalendarPdfParser.extractText(bytes), throwsFormatException);
+    final cmap = _compressed(
+      ascii.encode('beginbfrange\n<0000> % comment\n<FFFFFF> <0001>\nendbfrange'),
+    );
+    expect(() => _parsePdf(_calendarPdf([], extra: [cmap])), throwsA(exceedsLimits));
   });
 
-  test('stops a compressed stream exceeding the PDF expansion budget', () {
-    final compressed = zlib.encode(Uint8List(65 * 1024 * 1024));
-    final bytes = Uint8List.fromList([
-      ...ascii.encode('1 0 obj << /Filter /FlateDecode >>\nstream\n'),
-      ...compressed,
-      ...ascii.encode('\nendstream\nendobj'),
-    ]);
-    expect(() => GakujoAcademicCalendarPdfParser.extractText(bytes), throwsFormatException);
+  test('counts cumulative expansion of unreferenced compressed streams', () {
+    final stream = _compressed(Uint8List(33 * 1024 * 1024));
+    final bytes = _calendarPdf([], extra: [stream, stream]);
+    expect(() => _parsePdf(bytes), throwsA(exceedsLimits));
   });
   test('findPdfUrlForAcademicYear finds the matching official PDF link', () {
     final uri = GakujoAcademicCalendarResolver.findPdfUrlForAcademicYear(
@@ -326,4 +358,97 @@ void main() {
     expect(merged.noClassDates, contains(DateTime(2026, 7, 30)));
     expect(merged.noClassDates, contains(DateTime(2026, 8, 5)));
   });
+}
+
+List<GakujoAcademicTerm> _parsePdf(Uint8List bytes, {int academicYear = 2026}) {
+  return GakujoAcademicCalendarPdfParser.termsFromPdfBytes(
+    bytes,
+    academicYear: academicYear,
+    sourceUrl: 'https://www.niigata-u.ac.jp/schedule.pdf',
+  );
+}
+
+CosStream _compressed(List<int> bytes) {
+  final compressed = Uint8List.fromList(zlib.encode(bytes));
+  return CosStream(
+    CosDictionary({
+      'Filter': const CosName('FlateDecode'),
+      'Length': CosInteger(compressed.length),
+    }),
+    compressed,
+  );
+}
+
+String _pageContent(List<String> lines) {
+  return [
+    for (final (index, line) in lines.indexed)
+      'BT 1 0 0 1 36 ${700 - index * 24} Tm '
+          '${RegExp(r'[0-9]+|[^0-9]+').allMatches(line).map((match) {
+        final run = match.group(0)!;
+        return int.tryParse(run) == null
+            ? '/CID 11 Tf <${run.codeUnits.map(_hex).join()}> Tj'
+            : '/Roman 11 Tf ($run) Tj';
+      }).join(' ')} ET',
+  ].join('\n');
+}
+
+String _hex(int code) => code.toRadixString(16).padLeft(4, '0');
+
+Uint8List _calendarPdf(List<String> content, {List<CosObject> extra = const []}) {
+  final builder = CosDocumentBuilder();
+  final cmapLines = <String>{
+    for (final page in content)
+      for (final match in RegExp(r'<([0-9a-f]+)> Tj').allMatches(page))
+        for (final unit in RegExp(r'.{4}').allMatches(match.group(1)!))
+          '<${unit.group(0)}> <${unit.group(0)}>',
+  };
+  final cmap = builder.add(_compressed(ascii.encode(
+    '${cmapLines.length} beginbfchar\n${cmapLines.join('\n')}\nendbfchar',
+  )));
+  final cid = builder.add(CosDictionary({
+    'Type': const CosName('Font'),
+    'Subtype': const CosName('Type0'),
+    'BaseFont': const CosName('FixtureCID'),
+    'Encoding': const CosName('Identity-H'),
+    'ToUnicode': cmap,
+    'DescendantFonts': CosArray([
+      CosDictionary({
+        'Type': const CosName('Font'),
+        'Subtype': const CosName('CIDFontType2'),
+        'DW': const CosInteger(1000),
+      }),
+    ]),
+  }));
+  final roman = builder.add(CosDictionary({
+    'Type': const CosName('Font'),
+    'Subtype': const CosName('Type1'),
+    'BaseFont': const CosName('Helvetica'),
+  }));
+  final pages = CosDictionary({
+    'Type': const CosName('Pages'),
+    'Count': CosInteger(content.length),
+  });
+  final parent = builder.add(pages);
+  pages['Kids'] = CosArray([
+    for (final page in content)
+      builder.add(CosDictionary({
+        'Type': const CosName('Page'),
+        'Parent': parent,
+        'MediaBox': CosArray(const [
+          CosInteger(0), CosInteger(0), CosInteger(595), CosInteger(842),
+        ]),
+        'Resources': CosDictionary({
+          'Font': CosDictionary({'CID': cid, 'Roman': roman}),
+        }),
+        'Contents': builder.add(_compressed(ascii.encode(page))),
+      })),
+  ]);
+  for (final object in extra) {
+    builder.add(object);
+  }
+  final root = builder.add(CosDictionary({
+    'Type': const CosName('Catalog'),
+    'Pages': parent,
+  }));
+  return builder.build(root: root);
 }

@@ -143,50 +143,6 @@ void main() {
   });
 
   group('official calendar PDF text', () {
-    test('joins mixed literal and CID runs that share a baseline', () {
-      // Digits come from a WinAnsi font as literal strings while kanji come
-      // from an Identity-H font as hex glyph ids, as in the 2027 授業暦.
-      final cmap = {
-        0x0001: '第',
-        0x0002: 'タ',
-        0x0003: 'ー',
-        0x0004: 'ム',
-        0x0005: '月',
-        0x0006: '日',
-        0x0007: '～',
-        0x0008: '１'
-      };
-      const content = '''
-BT
-/C2_0 1 Tf
-7.32 0 0 7.32 400 300 Tm
-<00010008000200030004>Tj
-ET
-BT
-/TT0 1 Tf
-7.32 0 0 7.32 400 280 Tm
-(4)Tj
-/C2_0 1 Tf
-0.5 0 Td
-<0005>Tj
-/TT0 1 Tf
-[(8)] TJ
-/C2_0 1 Tf
-<00060007>Tj
-/TT0 1 Tf
-(6)Tj
-<0005>Tj
-(8)Tj
-<0006>Tj
-ET
-''';
-      final lines = GakujoAcademicCalendarPdfParser.textLinesFromContentStream(
-        content,
-        cmap,
-      );
-      expect(lines, ['第１ターム', '4 月 8 日～ 6 月 8 日']);
-    });
-
     test('reads spaced ranges, class-day swaps and class-held overrides', () {
       final terms = GakujoAcademicCalendarPdfParser.termsFromExtractedText(
         const GakujoPdfText(

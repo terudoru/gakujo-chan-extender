@@ -133,10 +133,10 @@ packages:
     dependency: "direct main"
     description:
       name: crypto
-      sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
+      sha256: e3626ae6270383c9e3a549f34c9e4cd26c09ae6a9adaab2bf4737a00340efdc4
       url: "https://pub.dev"
     source: hosted
-    version: "3.0.7"
+    version: "3.0.8"
   cryptography:
     dependency: "direct main"
     description:
@@ -686,6 +686,30 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.13.1"
+  pdf_cos:
+    dependency: "direct main"
+    description:
+      name: pdf_cos
+      sha256: "9014cef777a7149992c18255a8fef978c2d052b903556bf2f59b910f166bed96"
+      url: "https://pub.dev"
+    source: hosted
+    version: "16.2.0"
+  pdf_document:
+    dependency: "direct main"
+    description:
+      name: pdf_document
+      sha256: fb9d10c99e593e144c6d5ff52ebfd843419e77d869820c19795b4af17b4c1bf7
+      url: "https://pub.dev"
+    source: hosted
+    version: "16.2.0"
+  pdf_graphics:
+    dependency: "direct main"
+    description:
+      name: pdf_graphics
+      sha256: "531d7f3e43ea3b36258567a013006ff5277630d38d178b86f0b4614718d9950b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "16.2.0"
   petitparser:
     dependency: transitive
     description:

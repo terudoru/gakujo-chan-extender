@@ -2,9 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
+import 'package:pdf_cos/pdf_cos.dart';
+import 'package:pdf_document/pdf_document.dart';
+import 'package:pdf_graphics/pdf_graphics.dart';
 
 import 'gakujo_academic_calendar.dart';
+import 'gakujo_academic_calendar_pdf_limits.dart';
 
 typedef GakujoCalendarHtmlFetcher = Future<String> Function(Uri uri);
 typedef GakujoCalendarBytesFetcher = Future<Uint8List> Function(Uri uri);
@@ -165,9 +168,36 @@ class GakujoAcademicCalendarPdfParser {
     required int academicYear,
     required String sourceUrl,
   }) {
-    final extracted = extractText(bytes);
-    return termsFromExtractedText(
+    checkAcademicCalendarPdfLimits(
+      bytes,
+      maxInputBytes: GakujoAcademicCalendarResolver.maxResponseBytes,
+    );
+    final document = PdfDocument.open(bytes);
+    final pageTexts = <String>[];
+    final matchingPages = <PdfPage>[];
+    for (var index = 0; index < document.pageCount; index++) {
+      final page = document.page(index);
+      checkAcademicCalendarPdfOperands(page.contentBytes());
+      final text = PdfTextExtractor.extract(document, index).text;
+      if (_pageAcademicYear(text) == academicYear) {
+        pageTexts.add(text);
+        matchingPages.add(page);
+      }
+    }
+    final text = pageTexts.join('\n');
+    final extracted = GakujoPdfText(text: text, actualTexts: const []);
+    final terms = termsFromExtractedText(
       extracted,
+      academicYear: academicYear,
+      sourceUrl: sourceUrl,
+    );
+    if (terms.isNotEmpty || matchingPages.isEmpty) return terms;
+
+    return termsFromExtractedText(
+      GakujoPdfText(
+        text: text,
+        actualTexts: matchingPages.expand(_pageActualTexts).toList(),
+      ),
       academicYear: academicYear,
       sourceUrl: sourceUrl,
     );
@@ -263,313 +293,32 @@ class GakujoAcademicCalendarPdfParser {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
-  static GakujoPdfText extractText(Uint8List bytes) {
-    if (bytes.length > GakujoAcademicCalendarResolver.maxResponseBytes) {
-      throw const FormatException('Calendar PDF exceeds size limit');
-    }
-    final streams = _decodedStreams(bytes);
-    final cmap = _parseToUnicodeMap(streams);
-    final lines = <String>[];
-    for (final stream in streams) {
-      final text = latin1.decode(stream, allowInvalid: true);
-      if (!text.contains('Tj') && !text.contains('TJ')) {
-        continue;
-      }
-      lines.addAll(textLinesFromContentStream(text, cmap));
-    }
-    final raw = BytesBuilder(copy: false)..add(bytes);
-    for (final stream in streams) {
-      raw.add(stream);
-    }
-    return GakujoPdfText(
-      text: lines.join('\n'),
-      actualTexts: _actualTexts(raw.takeBytes()),
-    );
+  static int? _pageAcademicYear(String text) {
+    final heading = RegExp(
+      r'^\s*(?:令\s*和\s*(元|[0-9]{1,2})|([0-9]{4}))\s*年\s*度'
+      r'(?:\s*[（(]\s*[0-9]{4}\s*[)）])?\s*新\s*潟\s*大\s*学\s*授\s*業\s*暦',
+      multiLine: true,
+    ).firstMatch(GakujoAcademicCalendarResolver._normalizeDigits(text));
+    if (heading == null) return null;
+    final reiwa = heading.group(1);
+    return reiwa == null
+        ? int.parse(heading.group(2)!)
+        : 2018 + (reiwa == '元' ? 1 : int.parse(reiwa));
   }
 
-  /// Reassembles the text runs of one content stream into lines.
-  ///
-  /// Runs that share a baseline are joined with a space, so a date drawn as
-  /// separate runs (e.g. `(4)Tj <6708>Tj (8)Tj ...` mixing a WinAnsi font for
-  /// digits and a CID font for kanji) stays on one line.
-  @visibleForTesting
-  static List<String> textLinesFromContentStream(
-    String content,
-    Map<int, String> cmap,
-  ) {
-    final lines = <String>[];
-    final current = <String>[];
-    double? currentY;
-    var lineMatrix = <double>[1, 0, 0, 1, 0, 0];
-    var leading = 0.0;
-    final operands = <Object>[];
-    List<Object>? array;
-    const maxContentTokens = 250000;
-    const maxPendingOperands = 4096;
-    var tokenCount = 0;
-
-    void breakLine() {
-      if (current.isNotEmpty) {
-        lines.add(current.join(' '));
-        current.clear();
-      }
-      currentY = null;
-    }
-
-    void show(String value) {
-      final y = lineMatrix[5];
-      final previousY = currentY;
-      if (previousY != null && (y - previousY).abs() > 0.5) {
-        breakLine();
-      }
-      currentY = y;
-      if (value.trim().isNotEmpty) {
-        current.add(value);
+  static Iterable<String> _pageActualTexts(PdfPage page) sync* {
+    final cursor = ContentStreamParser.cursor(page.contentBytes());
+    String? operator;
+    while ((operator = cursor.nextOperator()) != null) {
+      if (operator != 'BDC') continue;
+      final operands = cursor.takeOperation().operands;
+      if (operands.length != 2) continue;
+      final properties = operands[1];
+      if (properties is! CosDictionary) continue;
+      if (properties['ActualText'] case final CosString replacement) {
+        yield replacement.text;
       }
     }
-
-    void moveText(double tx, double ty) {
-      lineMatrix = [
-        lineMatrix[0],
-        lineMatrix[1],
-        lineMatrix[2],
-        lineMatrix[3],
-        lineMatrix[4] + tx * lineMatrix[0] + ty * lineMatrix[2],
-        lineMatrix[5] + tx * lineMatrix[1] + ty * lineMatrix[3],
-      ];
-    }
-
-    String decodeOperand(Object operand) {
-      if (operand is _PdfStringToken) {
-        return operand.decode(cmap);
-      }
-      if (operand is List<Object>) {
-        return operand
-            .whereType<_PdfStringToken>()
-            .map((token) => token.decode(cmap))
-            .join();
-      }
-      return '';
-    }
-
-    double? number(int fromEnd) {
-      final index = operands.length - fromEnd;
-      if (index < 0) {
-        return null;
-      }
-      final value = operands[index];
-      return value is double ? value : null;
-    }
-
-    void operate(String operator) {
-      switch (operator) {
-        case 'BT':
-          lineMatrix = <double>[1, 0, 0, 1, 0, 0];
-        case 'Tm':
-          final values = [for (var i = 6; i >= 1; i -= 1) number(i)];
-          if (values.every((value) => value != null)) {
-            lineMatrix = values.cast<double>();
-          }
-        case 'Td':
-        case 'TD':
-          final tx = number(2);
-          final ty = number(1);
-          if (tx != null && ty != null) {
-            if (operator == 'TD') {
-              leading = -ty;
-            }
-            moveText(tx, ty);
-          }
-        case 'TL':
-          leading = number(1) ?? leading;
-        case 'T*':
-          moveText(0, -leading);
-        case 'Tj':
-        case 'TJ':
-          if (operands.isNotEmpty) {
-            show(decodeOperand(operands.last));
-          }
-        case "'":
-        case '"':
-          moveText(0, -leading);
-          if (operands.isNotEmpty) {
-            show(decodeOperand(operands.last));
-          }
-      }
-      operands.clear();
-    }
-
-    final length = content.length;
-    var index = 0;
-    bool isWhitespace(int code) =>
-        code == 0x20 ||
-        code == 0x0a ||
-        code == 0x0d ||
-        code == 0x09 ||
-        code == 0x0c ||
-        code == 0x00;
-    bool isDelimiter(int code) =>
-        isWhitespace(code) || '()<>[]{}/%'.codeUnits.contains(code);
-
-    void push(Object value) {
-      final open = array;
-      if (open != null) {
-        if (open.length >= maxPendingOperands) {
-          throw const FormatException('Calendar PDF operand limit exceeded');
-        }
-        open.add(value);
-      } else {
-        if (operands.length >= maxPendingOperands) {
-          throw const FormatException('Calendar PDF operand limit exceeded');
-        }
-        operands.add(value);
-      }
-    }
-
-    while (index < length) {
-      final code = content.codeUnitAt(index);
-      if (isWhitespace(code)) {
-        index += 1;
-        continue;
-      }
-      if (++tokenCount > maxContentTokens) {
-        throw const FormatException('Calendar PDF token limit exceeded');
-      }
-      switch (content[index]) {
-        case '%':
-          while (index < length &&
-              content[index] != '\n' &&
-              content[index] != '\r') {
-            index += 1;
-          }
-        case '(':
-          final parsed = _readLiteralString(content, index);
-          push(_PdfStringToken(parsed.$1, isHex: false));
-          index = parsed.$2;
-        case '<':
-          if (index + 1 < length && content[index + 1] == '<') {
-            index += 2;
-            break;
-          }
-          final end = content.indexOf('>', index + 1);
-          final hex = content.substring(index + 1, end < 0 ? length : end);
-          push(_PdfStringToken(_hexBytes(hex), isHex: true));
-          index = end < 0 ? length : end + 1;
-        case '>':
-          index += 1;
-        case '[':
-          array = <Object>[];
-          index += 1;
-        case ']':
-          final closed = array;
-          array = null;
-          if (closed != null) {
-            push(closed);
-          }
-          index += 1;
-        case '{':
-        case '}':
-          index += 1;
-        case '/':
-          var end = index + 1;
-          while (end < length && !isDelimiter(content.codeUnitAt(end))) {
-            end += 1;
-          }
-          push(content.substring(index, end));
-          index = end;
-        default:
-          var end = index + 1;
-          while (end < length && !isDelimiter(content.codeUnitAt(end))) {
-            end += 1;
-          }
-          final token = content.substring(index, end);
-          index = end;
-          final value = double.tryParse(token);
-          if (value != null) {
-            push(value);
-          } else if (token == 'BI') {
-            // Skip inline image data, which is binary.
-            final imageEnd = RegExp(r'\sEI(?=\s|$)').firstMatch(
-              content.substring(index),
-            );
-            index = imageEnd == null ? length : index + imageEnd.end;
-            operands.clear();
-          } else {
-            operate(token);
-          }
-      }
-    }
-    breakLine();
-    return lines;
-  }
-
-  static (List<int>, int) _readLiteralString(String content, int start) {
-    final bytes = <int>[];
-    var depth = 0;
-    var index = start;
-    while (index < content.length) {
-      final char = content[index];
-      if (char == '\\') {
-        index += 1;
-        if (index >= content.length) {
-          break;
-        }
-        final escaped = content[index];
-        switch (escaped) {
-          case 'n':
-            bytes.add(0x0a);
-          case 'r':
-            bytes.add(0x0d);
-          case 't':
-            bytes.add(0x09);
-          case 'b':
-            bytes.add(0x08);
-          case 'f':
-            bytes.add(0x0c);
-          case '\r':
-            if (index + 1 < content.length && content[index + 1] == '\n') {
-              index += 1;
-            }
-          case '\n':
-            break;
-          default:
-            final octal = RegExp(r'[0-7]{1,3}').matchAsPrefix(content, index);
-            if (octal != null) {
-              bytes.add(int.parse(octal.group(0)!, radix: 8) & 0xff);
-              index = octal.end - 1;
-            } else {
-              bytes.add(content.codeUnitAt(index) & 0xff);
-            }
-        }
-        index += 1;
-        continue;
-      }
-      if (char == '(') {
-        depth += 1;
-        if (depth > 1) {
-          bytes.add(0x28);
-        }
-      } else if (char == ')') {
-        depth -= 1;
-        if (depth == 0) {
-          return (bytes, index + 1);
-        }
-        bytes.add(0x29);
-      } else {
-        bytes.add(content.codeUnitAt(index) & 0xff);
-      }
-      index += 1;
-    }
-    return (bytes, content.length);
-  }
-
-  static List<int> _hexBytes(String hex) {
-    final compact = hex.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '');
-    final padded = compact.length.isOdd ? '${compact}0' : compact;
-    return [
-      for (var i = 0; i + 1 < padded.length; i += 2)
-        int.parse(padded.substring(i, i + 2), radix: 16),
-    ];
   }
 
   static Map<int, (DateTime, DateTime)>? _termRangesFromActualText(
@@ -734,190 +483,6 @@ class GakujoAcademicCalendarPdfParser {
     );
     return int.tryParse(normalized);
   }
-
-  static List<Uint8List> _decodedStreams(Uint8List bytes) {
-    final streams = <Uint8List>[];
-    var totalBytes = 0;
-    var scannedStreams = 0;
-    final pattern = RegExp(r'stream\r?\n');
-    final source = latin1.decode(bytes, allowInvalid: true);
-    for (final match in pattern.allMatches(source)) {
-      if (++scannedStreams > 1000) throw const _PdfLimitException();
-      final start = match.end;
-      final end = source.indexOf('endstream', start);
-      if (end < 0) {
-        continue;
-      }
-      final headerLimit = match.start > 8192 ? match.start - 8192 : 0;
-      final headerSlice = source.substring(headerLimit, match.start);
-      final headerStart = headerSlice.lastIndexOf('obj');
-      final header = headerStart < 0 ? headerSlice : headerSlice.substring(headerStart);
-      final raw = bytes.sublist(start, end);
-      final trimmed = _trimLineBreaks(raw);
-      if (!header.contains('/FlateDecode')) {
-        totalBytes += trimmed.length;
-        if (totalBytes > _maxDecodedPdfBytes) throw const _PdfLimitException();
-        streams.add(trimmed);
-        continue;
-      }
-      try {
-        final sink = _BoundedPdfSink(_maxDecodedPdfBytes - totalBytes);
-        final decoder = zlib.decoder.startChunkedConversion(sink);
-        for (var offset = 0; offset < trimmed.length; offset += 4096) {
-          final end = offset + 4096 < trimmed.length ? offset + 4096 : trimmed.length;
-          decoder.add(trimmed.sublist(offset, end));
-        }
-        decoder.close();
-        final decoded = sink.bytes.takeBytes();
-        totalBytes += decoded.length;
-        streams.add(decoded);
-      } on _PdfLimitException {
-        rethrow;
-      } on Object {
-        // Ignore malformed compressed streams.
-      }
-    }
-    return streams;
-  }
-
-  static Map<int, String> _parseToUnicodeMap(List<Uint8List> streams) {
-    final map = <int, String>{};
-    for (final stream in streams) {
-      final text = latin1.decode(stream, allowInvalid: true);
-      if (!text.contains('beginbfchar') && !text.contains('beginbfrange')) {
-        continue;
-      }
-      for (final block in RegExp(
-        r'beginbfchar(.*?)endbfchar',
-        dotAll: true,
-      ).allMatches(text)) {
-        for (final pair in RegExp(
-          r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>',
-        ).allMatches(block.group(1) ?? '')) {
-          final from = int.tryParse(pair.group(1) ?? '', radix: 16);
-          final to = int.tryParse(pair.group(2) ?? '', radix: 16);
-          if (from != null && to != null) {
-            if (from > 65535 || to > 0x10ffff || map.length >= 65536) {
-              throw const _PdfLimitException();
-            }
-            map[from] = String.fromCharCode(to);
-          }
-        }
-      }
-      for (final block in RegExp(
-        r'beginbfrange(.*?)endbfrange',
-        dotAll: true,
-      ).allMatches(text)) {
-        for (final range in RegExp(
-          r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>',
-        ).allMatches(block.group(1) ?? '')) {
-          final from = int.tryParse(range.group(1) ?? '', radix: 16);
-          final to = int.tryParse(range.group(2) ?? '', radix: 16);
-          final target = int.tryParse(range.group(3) ?? '', radix: 16);
-          if (from == null || to == null || target == null) {
-            continue;
-          }
-          if (to < from || to - from > 65535 || map.length + to - from + 1 > 65536 ||
-              target + to - from > 0x10ffff) {
-            throw const _PdfLimitException();
-          }
-          for (var code = from; code <= to; code += 1) {
-            map[code] = String.fromCharCode(target + code - from);
-          }
-        }
-      }
-    }
-    return map;
-  }
-
-  static List<String> _actualTexts(Uint8List bytes) {
-    final text = latin1.decode(bytes, allowInvalid: true);
-    final values = <String>[];
-    for (final match in RegExp(
-      r'/ActualText\((.*?)\)',
-      dotAll: true,
-    ).allMatches(text)) {
-      values.add(_decodePdfLiteral(match.group(1) ?? '').trim());
-    }
-    return values.where((value) => value.isNotEmpty).toList();
-  }
-
-  static String _decodePdfLiteral(String raw) {
-    return raw
-        .replaceAll(r'\(', '(')
-        .replaceAll(r'\)', ')')
-        .replaceAll(r'\\', '\\');
-  }
-
-  static Uint8List _trimLineBreaks(Uint8List bytes) {
-    var start = 0;
-    var end = bytes.length;
-    while (start < end && (bytes[start] == 0x0a || bytes[start] == 0x0d)) {
-      start += 1;
-    }
-    while (end > start && (bytes[end - 1] == 0x0a || bytes[end - 1] == 0x0d)) {
-      end -= 1;
-    }
-    return bytes.sublist(start, end);
-  }
-}
-
-class _PdfStringToken {
-  const _PdfStringToken(this.bytes, {required this.isHex});
-
-  final List<int> bytes;
-  final bool isHex;
-
-  String decode(Map<int, String> cmap) {
-    bool printable(List<int> values) =>
-        values.every((value) => value >= 0x20 && value != 0x7f);
-    String? twoByte() {
-      if (bytes.length.isOdd || bytes.isEmpty) {
-        return null;
-      }
-      final buffer = StringBuffer();
-      var matched = 0;
-      for (var i = 0; i + 1 < bytes.length; i += 2) {
-        final value = cmap[(bytes[i] << 8) + bytes[i + 1]];
-        if (value != null) {
-          matched += 1;
-          buffer.write(value);
-        }
-      }
-      return matched == 0 ? null : buffer.toString();
-    }
-
-    if (!isHex && printable(bytes)) {
-      // Simple (WinAnsi) fonts draw ASCII digits and punctuation directly.
-      return String.fromCharCodes(bytes);
-    }
-    final cid = twoByte();
-    if (cid != null) {
-      return cid;
-    }
-    return printable(bytes) ? String.fromCharCodes(bytes) : '';
-  }
-}
-
-const _maxDecodedPdfBytes = 64 * 1024 * 1024;
-
-class _PdfLimitException extends FormatException {
-  const _PdfLimitException() : super('Calendar PDF exceeds processing limits');
-}
-
-class _BoundedPdfSink extends ByteConversionSink {
-  _BoundedPdfSink(this.limit);
-  final int limit;
-  final bytes = BytesBuilder(copy: false);
-
-  @override
-  void add(List<int> chunk) {
-    if (bytes.length + chunk.length > limit) throw const _PdfLimitException();
-    bytes.add(chunk);
-  }
-
-  @override
-  void close() {}
 }
 
 class GakujoPdfText {
