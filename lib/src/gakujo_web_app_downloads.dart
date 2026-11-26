@@ -486,11 +486,90 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
   }
 
-  Future<void> _showDownloadHistoryDialog(ModalRoute<void> settingsRoute) async {
-    final loaded = await readGakujoSavedData(
-      _downloadHistoryStore.load,
-      showSnackBar: _showSnackBar,
-    );
+  Future<void> _showDownloadHistoryDialog(ModalRoute<void> settingsRoute) =>
+      _showDownloadRecordsDialog(
+        settingsRoute,
+        load: _downloadHistoryStore.load,
+        clear: _downloadHistoryStore.clear,
+        title: 'ダウンロード履歴',
+        width: 520,
+        emptyMessage: 'まだ保存したファイルはありません。',
+        clearLabel: '履歴を削除',
+        clearFailureMessage: '履歴を削除できませんでした',
+        clearLogMessage: 'Failed to clear download history',
+        buildRow: (dialogContext, entry) => ListTile(
+          dense: true,
+          title: Text(entry.fileName),
+          subtitle: Text(
+            [
+              entry.displayCourseName,
+              _formatDateTime(entry.savedAt),
+              if (entry.location != null)
+                gakujoDownloadLocationLabel(entry.location!),
+            ].join('\n'),
+          ),
+          isThreeLine: entry.location != null,
+          trailing: _savedDownloadActions(dialogContext, entry.location),
+        ),
+      );
+
+  Future<void> _showFailedDownloadsDialog(ModalRoute<void> settingsRoute) =>
+      _showDownloadRecordsDialog(
+        settingsRoute,
+        load: _downloadHistoryStore.loadFailedDownloads,
+        clear: _downloadHistoryStore.clearFailedDownloads,
+        title: '失敗したダウンロード',
+        width: 560,
+        emptyMessage: '再試行待ちのダウンロードはありません。',
+        clearLabel: '一覧を削除',
+        clearFailureMessage: '一覧を削除できませんでした',
+        clearLogMessage: 'Failed to clear failed downloads',
+        buildRow: (dialogContext, entry) {
+          final errorMessage = gakujoUserFacingMessage(
+            entry.errorMessage,
+            platform: defaultTargetPlatform,
+          );
+          return ListTile(
+            dense: true,
+            title: Text(
+              entry.request.fileName.trim().isEmpty
+                  ? _displayUrl(entry.request.url)
+                  : entry.request.fileName,
+            ),
+            subtitle: Text(
+              '${entry.request.courseName.trim().isEmpty ? '未分類' : entry.request.courseName}\n'
+              '${_formatDateTime(entry.failedAt)}\n'
+              '$errorMessage',
+            ),
+            isThreeLine: true,
+            trailing: IconButton(
+              tooltip: entry.canRetry ? '再試行' : '元のページから再度ダウンロードしてください',
+              icon: const Icon(Icons.refresh),
+              onPressed: !entry.canRetry ? null : () async {
+                Navigator.of(dialogContext).pop();
+                await _handleDownloadRequest(
+                  entry.request,
+                  retryEntryId: entry.id,
+                );
+              },
+            ),
+          );
+        },
+      );
+
+  Future<void> _showDownloadRecordsDialog<T>(
+    ModalRoute<void> settingsRoute, {
+    required Future<List<T>> Function() load,
+    required Future<void> Function() clear,
+    required String title,
+    required double width,
+    required String emptyMessage,
+    required String clearLabel,
+    required String clearFailureMessage,
+    required String clearLogMessage,
+    required Widget Function(BuildContext dialogContext, T entry) buildRow,
+  }) async {
+    final loaded = await readGakujoSavedData(load, showSnackBar: _showSnackBar);
     if (loaded == null || !mounted || !settingsRoute.isActive) {
       return;
     }
@@ -502,35 +581,17 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('ダウンロード履歴'),
+              title: Text(title),
               content: SizedBox(
-                width: 520,
+                width: width,
                 child: entries.isEmpty
-                    ? const Text('まだ保存したファイルはありません。')
+                    ? Text(emptyMessage)
                     : ListView.separated(
                         shrinkWrap: true,
                         itemCount: entries.length,
                         separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final entry = entries[index];
-                          return ListTile(
-                            dense: true,
-                            title: Text(entry.fileName),
-                            subtitle: Text(
-                              [
-                                entry.displayCourseName,
-                                _formatDateTime(entry.savedAt),
-                                if (entry.location != null)
-                                  gakujoDownloadLocationLabel(entry.location!),
-                              ].join('\n'),
-                            ),
-                            isThreeLine: entry.location != null,
-                            trailing: _savedDownloadActions(
-                              dialogContext,
-                              entry.location,
-                            ),
-                          );
-                        },
+                        itemBuilder: (_, index) =>
+                            buildRow(dialogContext, entries[index]),
                       ),
               ),
               actions: [
@@ -539,15 +600,15 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                       ? null
                       : () async {
                           try {
-                            await _downloadHistoryStore.clear();
+                            await clear();
                           } on Object catch (error, stackTrace) {
                             developer.log(
-                              'Failed to clear download history',
+                              clearLogMessage,
                               name: 'MoreBetterGakujo',
                               error: error,
                               stackTrace: stackTrace,
                             );
-                            _showSnackBar('履歴を削除できませんでした');
+                            _showSnackBar(clearFailureMessage);
                             return;
                           }
                           entries = const [];
@@ -556,103 +617,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                           }
                           setDialogState(() {});
                         },
-                  child: const Text('履歴を削除'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('閉じる'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _showFailedDownloadsDialog(ModalRoute<void> settingsRoute) async {
-    final loaded = await readGakujoSavedData(
-      _downloadHistoryStore.loadFailedDownloads,
-      showSnackBar: _showSnackBar,
-    );
-    if (loaded == null || !mounted || !settingsRoute.isActive) {
-      return;
-    }
-    var entries = loaded;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('失敗したダウンロード'),
-              content: SizedBox(
-                width: 560,
-                child: entries.isEmpty
-                    ? const Text('再試行待ちのダウンロードはありません。')
-                    : ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: entries.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final entry = entries[index];
-                          final errorMessage = gakujoUserFacingMessage(
-                            entry.errorMessage,
-                            platform: defaultTargetPlatform,
-                          );
-                          return ListTile(
-                            dense: true,
-                            title: Text(
-                              entry.request.fileName.trim().isEmpty
-                                  ? _displayUrl(entry.request.url)
-                                  : entry.request.fileName,
-                            ),
-                            subtitle: Text(
-                              '${entry.request.courseName.trim().isEmpty ? '未分類' : entry.request.courseName}\n'
-                              '${_formatDateTime(entry.failedAt)}\n'
-                              '$errorMessage',
-                            ),
-                            isThreeLine: true,
-                            trailing: IconButton(
-                              tooltip: entry.canRetry ? '再試行' : '元のページから再度ダウンロードしてください',
-                              icon: const Icon(Icons.refresh),
-                              onPressed: !entry.canRetry ? null : () async {
-                                Navigator.of(dialogContext).pop();
-                                await _handleDownloadRequest(
-                                  entry.request,
-                                  retryEntryId: entry.id,
-                                );
-                              },
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: entries.isEmpty
-                      ? null
-                      : () async {
-                          try {
-                            await _downloadHistoryStore.clearFailedDownloads();
-                          } on Object catch (error, stackTrace) {
-                            developer.log(
-                              'Failed to clear failed downloads',
-                              name: 'MoreBetterGakujo',
-                              error: error,
-                              stackTrace: stackTrace,
-                            );
-                            _showSnackBar('一覧を削除できませんでした');
-                            return;
-                          }
-                          entries = const [];
-                          if (!dialogContext.mounted) {
-                            return;
-                          }
-                          setDialogState(() {});
-                        },
-                  child: const Text('一覧を削除'),
+                  child: Text(clearLabel),
                 ),
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),

@@ -8533,60 +8533,46 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _injectExpiredPageRecoveryIfAllowed() async {
-    if (!_canRunPageScripts) {
-      return;
-    }
-
+  Future<void> _runPageScript(
+    _PageScriptBuilder build,
+    String failureMessage,
+  ) async {
     try {
-      await _controller.runJavaScript(GakujoExpiredPageRecoveryScript.build());
+      await _controller.runJavaScript(build());
     } catch (error, stackTrace) {
       developer.log(
+        failureMessage,
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _injectPageScriptIfAllowed(
+    _PageScriptBuilder build,
+    String failureMessage,
+  ) async {
+    if (!_canRunPageScripts) return;
+    return _runPageScript(build, failureMessage);
+  }
+
+  Future<void> _injectExpiredPageRecoveryIfAllowed() =>
+      _injectPageScriptIfAllowed(
+        GakujoExpiredPageRecoveryScript.build,
         'Failed to inject expired page recovery script',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
       );
-    }
-  }
 
-  Future<void> _injectLoginAndTimeoutHooksIfAllowed() async {
-    if (!_canRunPageScripts) {
-      return;
-    }
-
-    try {
-      await _controller.runJavaScript(
-        GakujoTimeoutPopupScript.buildWithLoginObserver(),
-      );
-    } catch (error, stackTrace) {
-      developer.log(
+  Future<void> _injectLoginAndTimeoutHooksIfAllowed() =>
+      _injectPageScriptIfAllowed(
+        GakujoTimeoutPopupScript.buildWithLoginObserver,
         'Failed to install login observer and timeout popup handler',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
       );
-    }
-  }
 
-  Future<void> _injectGpaDisplayIfAllowed() async {
-    if (!_canRunPageScripts) {
-      return;
-    }
-
-    try {
-      await _controller.runJavaScript(
-        gakujoPageScriptBuilders(_appSettings)['gpa']!(),
-      );
-    } catch (error, stackTrace) {
-      developer.log(
+  Future<void> _injectGpaDisplayIfAllowed() => _injectPageScriptIfAllowed(
+        () => gakujoPageScriptBuilders(_appSettings)['gpa']!(),
         'Failed to inject GPA display script',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
       );
-    }
-  }
 
   Future<void> _injectOriginalExtensionFeaturesIfAllowed() async {
     if (!_canRunPageScripts) {
@@ -8628,17 +8614,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _injectReportSorterIfAllowed() async {
-    if (!_canRunPageScripts) return;
-    try {
-      await _controller.runJavaScript(GakujoReportSorterScript.build(
-        initialSort: _appSettings.reportInitialSort,
-      ));
-    } on Object catch (error, stackTrace) {
-      developer.log('Failed to configure report initial sort',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
-    }
-  }
+  Future<void> _injectReportSorterIfAllowed() => _injectPageScriptIfAllowed(
+        () => GakujoReportSorterScript.build(
+          initialSort: _appSettings.reportInitialSort,
+        ),
+        'Failed to configure report initial sort',
+      );
 
   Future<void> _applyFeatureFlagRuntimeState(
     GakujoFeatureFlag flag, {
@@ -8717,22 +8698,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final keywordNotificationsEnabled =
         messages.mode == GakujoMessageNotificationMode.keywords &&
         _appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineNotifications);
-    try {
-      await _controller.runJavaScript(
-        GakujoMessageFilterScript.build(
-          keywords: _appSettings.messageExcludeKeywords,
-          notificationKeywords:
-              keywordNotificationsEnabled ? messages.keywords : const [],
-        ),
-      );
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to inject message filter script',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
+    return _runPageScript(
+      () => GakujoMessageFilterScript.build(
+        keywords: _appSettings.messageExcludeKeywords,
+        notificationKeywords:
+            keywordNotificationsEnabled ? messages.keywords : const [],
+      ),
+      'Failed to inject message filter script',
+    );
   }
 
   Future<void> _injectReportDraftIfAllowed() async {

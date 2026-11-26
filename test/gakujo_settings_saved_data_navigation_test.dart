@@ -102,6 +102,8 @@ void main() {
       final operations = <String>[];
       final fifo = StorageOperationQueue();
       _PendingRead? pending;
+      String? rejectClear;
+      ({String key, Completer<void> started, Completer<void> release})? pendingClear;
       messenger.setMockMethodCallHandler(
         storage,
         (call) => fifo.run(() async {
@@ -123,6 +125,14 @@ void main() {
             case 'write':
               data[key!] = call.arguments['value'] as String;
             case 'delete':
+              if (rejectClear != null && key == rejectClear) {
+                throw PlatformException(code: 'synthetic_clear_failure');
+              }
+              final clear = pendingClear;
+              if (clear != null && clear.key == key) {
+                clear.started.complete();
+                await clear.release.future;
+              }
               data.remove(key);
             case 'deleteAll':
               data.clear();
@@ -432,9 +442,72 @@ void main() {
           await tap(close);
           expect({for (final k in original.keys) k: data[k]}, original);
         }
+
+        pending = null;
+        for (final (title, key, marker, clearLabel, failure, empty) in [
+          (
+            'ダウンロード履歴', _history, 'Sample saved.pdf', '履歴を削除',
+            '履歴を削除できませんでした', 'まだ保存したファイルはありません。',
+          ),
+          (
+            '失敗したダウンロード', _failures, 'Sample failed.pdf', '一覧を削除',
+            '一覧を削除できませんでした', '再試行待ちのダウンロードはありません。',
+          ),
+        ]) {
+          final otherKey = key == _history ? _failures : _history;
+          final settingsRoute = await settings(downloadsShortcut);
+          await tap(await savedDataAction(title, downloadsShortcut));
+          final clear = find.widgetWithText(TextButton, clearLabel);
+          final dialog = ModalRoute.of(tester.element(clear))!;
+          final markerFinder = find.text(marker).hitTestable();
+          final otherValue = data[otherKey];
+          rejectClear = key;
+          await tap(clear);
+          expect(find.text(failure), findsWidgets);
+          expect(markerFinder, findsOneWidget);
+          expect(dialog.isCurrent, isTrue);
+          expect(data[key], original[key]);
+          expect(data[otherKey], otherValue);
+
+          rejectClear = null;
+          await tap(clear);
+          expect(dialog.isCurrent, isTrue);
+          expect(find.text(empty).hitTestable(), findsOneWidget);
+          expect(tester.widget<TextButton>(clear).onPressed, isNull);
+          expect(data.containsKey(key), isFalse);
+          expect(data[otherKey], otherValue);
+          await tap(close);
+          expect(settingsRoute.isCurrent, isTrue);
+
+          data[key] = original[key]!;
+          await tap(await savedDataAction(title, downloadsShortcut));
+          expect(markerFinder, findsOneWidget);
+          final delayed = pendingClear = (
+            key: key,
+            started: Completer<void>(),
+            release: Completer<void>(),
+          );
+          await tap(clear);
+          expect(delayed.started.isCompleted, isTrue);
+          expect(markerFinder, findsOneWidget);
+          await tap(close);
+          expect(settingsRoute.isCurrent, isTrue);
+          delayed.release.complete();
+          await tester.pumpAndSettle();
+          pendingClear = null;
+          expect(settingsRoute.isCurrent, isTrue);
+          expect(data.containsKey(key), isFalse);
+          expect(data[otherKey], otherValue);
+          expect(tester.takeException(), isNull);
+          await tap(close);
+        }
       } finally {
         final release = pending?.release;
         if (release != null && !release.isCompleted) release.complete();
+        final clearRelease = pendingClear?.release;
+        if (clearRelease != null && !clearRelease.isCompleted) {
+          clearRelease.complete();
+        }
         await tester.pumpWidget(const SizedBox());
         await tester.pump(const Duration(minutes: 4));
         await tester.pumpAndSettle();
