@@ -706,8 +706,8 @@ class MainActivity : FlutterActivity() {
                     result.success(downloadRootState())
                 }
                 "downloadToCourseFolder",
-                "downloadToConfiguredFolder" -> downloadToConfiguredFolder(call, result)
-                "downloadToPickedFile" -> downloadToPickedFile(call, result)
+                "downloadToConfiguredFolder",
+                "downloadToPickedFile" -> handleDownloadRequest(call, result)
                 "exportDownloadedFile" -> exportDownloadedFile(call, result)
                 "openDownloadedFile" -> openDownloadedFile(call, result)
                 "readContentUriChunk" -> readContentUriChunk(call, result)
@@ -729,8 +729,7 @@ class MainActivity : FlutterActivity() {
             CALENDAR_CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "syncEvents" -> syncCalendarEvents(call, result)
-                "deleteAddedEvents" -> deleteCalendarEvents(call, result)
+                "syncEvents", "deleteAddedEvents" -> handleCalendarRequest(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -789,11 +788,7 @@ class MainActivity : FlutterActivity() {
                 result.error("calendar_permission_denied", "カレンダーへのアクセスが許可されませんでした", null)
                 return
             }
-            when (call.method) {
-                "syncEvents" -> performCalendarSync(call, result)
-                "deleteAddedEvents" -> performCalendarDelete(call, result)
-                else -> result.notImplemented()
-            }
+            performCalendarRequest(call, result)
             return
         }
         if (requestCode != REQUEST_POST_NOTIFICATIONS) {
@@ -1057,33 +1052,18 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        Thread {
-            try {
-                val saved = performDownloadToUri(args, uri)
-                GakujoDocumentPermissions.persistIfOffered(
-                    data.flags,
-                    persist = { contentResolver.takePersistableUriPermission(uri, it) },
-                    onDenied = { Log.w(TAG, "Failed to persist download file permission", it) }
-                )
-                runOnUiThread {
-                    result.success(
-                        mapOf(
-                            "fileName" to saved.fileName,
-                            "courseName" to saved.courseName,
-                            "location" to saved.location
-                        )
-                    )
-                }
-            } catch (error: Exception) {
-                Log.e(TAG, "Download failed", error)
-                runOnUiThread {
-                    result.error("download_failed", error.message ?: "保存できませんでした", null)
-                }
-            }
-        }.start()
+        runDownload(result) {
+            val saved = performDownloadToUri(args, uri)
+            GakujoDocumentPermissions.persistIfOffered(
+                data.flags,
+                persist = { contentResolver.takePersistableUriPermission(uri, it) },
+                onDenied = { Log.w(TAG, "Failed to persist download file permission", it) }
+            )
+            saved
+        }
     }
 
-    private fun downloadToConfiguredFolder(call: MethodCall, result: MethodChannel.Result) {
+    private fun handleDownloadRequest(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *>
         if (args == null) {
             result.error("missing_arguments", "ダウンロード情報を取得できませんでした", null)
@@ -1092,6 +1072,11 @@ class MainActivity : FlutterActivity() {
         val rawUrl = args["url"]?.toString()
         if (!isAllowedGakujoUrl(rawUrl)) {
             result.error("blocked_url", "学務情報システム以外のダウンロードをブロックしました", null)
+            return
+        }
+
+        if (call.method == "downloadToPickedFile") {
+            downloadToPickedFile(args, rawUrl.orEmpty(), result)
             return
         }
 
@@ -1102,20 +1087,24 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        val downloadArgs = args
         val autoSortByCourse = args["autoSortByCourse"] as? Boolean ?: true
+        runDownload(result) {
+            performDownload(args, root, autoSortByCourse)
+        }
+    }
+
+    private fun runDownload(result: MethodChannel.Result, download: () -> SavedDownload) {
         Thread {
             try {
-                val saved = performDownload(downloadArgs, root, autoSortByCourse)
+                val saved = download()
                 runOnUiThread {
-                    result.success(
-                        mapOf(
-                            "fileName" to saved.fileName,
-                            "courseName" to saved.courseName,
-                            "location" to saved.location,
-                            "alreadySaved" to saved.alreadySaved
-                        )
+                    val payload = mutableMapOf<String, Any>(
+                        "fileName" to saved.fileName,
+                        "courseName" to saved.courseName,
+                        "location" to saved.location
                     )
+                    saved.alreadySaved?.let { payload["alreadySaved"] = it }
+                    result.success(payload)
                 }
             } catch (error: Exception) {
                 Log.e(TAG, "Download failed", error)
@@ -1126,17 +1115,7 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    private fun downloadToPickedFile(call: MethodCall, result: MethodChannel.Result) {
-        val args = call.arguments as? Map<*, *>
-        if (args == null) {
-            result.error("missing_arguments", "ダウンロード情報を取得できませんでした", null)
-            return
-        }
-        val rawUrl = args["url"]?.toString()
-        if (!isAllowedGakujoUrl(rawUrl)) {
-            result.error("blocked_url", "学務情報システム以外のダウンロードをブロックしました", null)
-            return
-        }
+    private fun downloadToPickedFile(args: Map<*, *>, url: String, result: MethodChannel.Result) {
         if (isPickerActive()) {
             result.error("picker_active", "保存先選択がすでに開いています", null)
             return
@@ -1146,7 +1125,7 @@ class MainActivity : FlutterActivity() {
         val suggestedName = chooseFileName(
             requestedName = requestedFileName,
             dispositionName = null,
-            url = rawUrl.orEmpty(),
+            url = url,
             mimeType = "application/octet-stream"
         )
         pendingPickFileResult = result
@@ -1784,7 +1763,7 @@ class MainActivity : FlutterActivity() {
         return url.takeIf { DeadlineReminders.isAuthenticNotification(this, it, proof) }
     }
 
-    private fun syncCalendarEvents(call: MethodCall, result: MethodChannel.Result) {
+    private fun handleCalendarRequest(call: MethodCall, result: MethodChannel.Result) {
         if (!hasCalendarPermission()) {
             if (pendingCalendarPermissionResult != null) {
                 result.error("permission_request_active", "カレンダー権限の確認がすでに開いています", null)
@@ -1801,27 +1780,15 @@ class MainActivity : FlutterActivity() {
             )
             return
         }
-        performCalendarSync(call, result)
+        performCalendarRequest(call, result)
     }
 
-    private fun deleteCalendarEvents(call: MethodCall, result: MethodChannel.Result) {
-        if (!hasCalendarPermission()) {
-            if (pendingCalendarPermissionResult != null) {
-                result.error("permission_request_active", "カレンダー権限の確認がすでに開いています", null)
-                return
-            }
-            pendingCalendarPermissionResult = result
-            pendingCalendarCall = call
-            requestPermissions(
-                arrayOf(
-                    android.Manifest.permission.READ_CALENDAR,
-                    android.Manifest.permission.WRITE_CALENDAR
-                ),
-                REQUEST_CALENDAR_PERMISSION
-            )
-            return
+    private fun performCalendarRequest(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "syncEvents" -> performCalendarSync(call, result)
+            "deleteAddedEvents" -> performCalendarDelete(call, result)
+            else -> result.notImplemented()
         }
-        performCalendarDelete(call, result)
     }
 
     private fun hasCalendarPermission(): Boolean {
@@ -2368,7 +2335,8 @@ class MainActivity : FlutterActivity() {
         val fileName: String,
         val courseName: String,
         val location: String,
-        val alreadySaved: Boolean = false
+        // Picker results omit this key.
+        val alreadySaved: Boolean? = null
     )
 
     private data class CalendarSyncBatchResult(

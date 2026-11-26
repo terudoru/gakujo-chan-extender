@@ -104,15 +104,29 @@ void main() {
     ).readAsStringSync();
     final handler = activity.substring(
       activity.indexOf('private fun handleCreateDownloadFileResult('),
-      activity.indexOf('private fun downloadToConfiguredFolder('),
+      activity.indexOf('private fun handleDownloadRequest('),
     );
+    final run = handler.indexOf('runDownload(result)');
     final save = handler.indexOf('performDownloadToUri(args, uri)');
     final persist =
         handler.indexOf('GakujoDocumentPermissions.persistIfOffered(');
-    expect(save, greaterThanOrEqualTo(0));
+    expect(run, greaterThanOrEqualTo(0));
+    expect(save, greaterThan(run));
     expect(persist, greaterThan(save));
     expect(handler,
         contains('contentResolver.takePersistableUriPermission(uri, it)'));
-    expect(handler.indexOf('result.success('), greaterThan(persist));
+    expect(handler.substring(persist),
+        matches(RegExp(r'\)\s*saved\s*\}\s*\}\s*$')));
+    final worker = activity.substring(
+      activity.indexOf('private fun runDownload('),
+      activity.indexOf('private fun downloadToPickedFile('),
+    );
+    expect(
+      worker,
+      matches(RegExp(
+        r'val saved = download\(\)\s*runOnUiThread \{'
+        r'[\s\S]*?result.success\(payload\)\s*\}',
+      )),
+    );
   });
 }
