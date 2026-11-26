@@ -107,7 +107,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 ```
 
 - `package_ios_ipa.sh` は、`pubspec.yaml` の版から `dist/MoreBetterGakujo-vX.Y.Z.ipa` を作る。出力先は環境変数 `OUTPUT_PATH` で変えられる
-- `generate_altstore_source.sh` には、環境変数 `RELEASE_TAG` と `RELEASE_NOTES` を渡せる
+- `generate_altstore_source.sh` は Python 3 を使う。環境変数 `RELEASE_TAG` と `RELEASE_NOTES` を渡せる
 - 手で作った source は、公開する IPA に合わせて `size`、`version`、`buildVersion`、リリースノートを確かめてからコミットする
 
 ## Linux のパッケージ
