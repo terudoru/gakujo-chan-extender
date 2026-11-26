@@ -14,6 +14,8 @@ import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart' as win;
 
+import 'support/planner_multikind_fixture.dart';
+
 const _portal = 'https://gakujo.iess.niigata-u.ac.jp';
 const _a =
     '$_portal/campusweb%3BJSESSIONID%3Dfixture/campussquare.do'
@@ -40,67 +42,6 @@ const _academicPacket = {
     },
   ],
 };
-const _multiFetchPayload = {
-  'v': 1,
-  'packets': {
-    // Deliberately out of order to verify canonical profile/grades/balances/registration order.
-    'registration': {
-      'v': 1,
-      'kind': 'registration',
-      'tables': [
-        {
-          'heading': '履修登録・登録状況照会',
-          'rows': [
-            ['開講番号', '登録状況'],
-            ['269G9001', '申請中'],
-            ['269G9002', '許可'],
-          ],
-        },
-      ],
-      'year': '2026',
-    },
-    'balances': {
-      'v': 1,
-      'kind': 'balances',
-      'tables': [
-        {
-          'heading': '履修科目確認表',
-          'rows': [
-            ['科目区分', '既修得単位数'],
-            ['教養教育に関する科目', '10.5'],
-          ],
-        },
-      ],
-    },
-    'grades': {
-      'v': 1,
-      'kind': 'grades',
-      'tables': [
-        {
-          'heading': '単位修得状況照会',
-          'rows': [
-            ['開講番号', '科目名', '単位数', '評価', '年度'],
-            ['269G9001', '合成力学', '2', '優', '2026'],
-          ],
-        },
-      ],
-    },
-    'profile': {
-      'v': 1,
-      'kind': 'profile',
-      'tables': [
-        {
-          'heading': '学生所属',
-          'rows': [
-            ['所属', '学年'],
-            ['理学部物理学科', '2'],
-          ],
-        },
-      ],
-    },
-  },
-};
-
 class _Prefs extends Fake implements GakujoLocalPrefsStore {
   @override
   Future<GakujoLocalPrefs?> load() async => null;
@@ -221,7 +162,7 @@ void main() {
         tester,
         ++viewId,
         academicFixture: true,
-        fetchHandler: () async => jsonEncode(jsonEncode(_multiFetchPayload)),
+        fetchHandler: () async => jsonEncode(jsonEncode(plannerMultiFetchPayload)),
       );
       try {
         await autoFetch.mount();
@@ -406,7 +347,7 @@ void main() {
         await tester.tap(find.text(copyLabel).hitTestable());
         await tester.pump();
         await abortDuringFetch.emit('navigationStarting', _portal);
-        inflight.complete(jsonEncode(jsonEncode(_multiFetchPayload)));
+        inflight.complete(jsonEncode(jsonEncode(plannerMultiFetchPayload)));
         await tester.pumpAndSettle();
         expect(find.text('コピー'), findsNothing);
         expect(await abortDuringFetch.readClipboard(), _previous);
