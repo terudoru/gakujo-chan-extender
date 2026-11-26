@@ -28,6 +28,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.FileInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -1173,61 +1174,8 @@ class MainActivity : FlutterActivity() {
         root: DocumentFile,
         autoSortByCourse: Boolean
     ): SavedDownload {
-        val originalUrl = args["url"].toString()
-        val method = args["method"]?.toString()?.uppercase(Locale.ROOT) ?: "GET"
-        val formFields = GakujoDownloadFormFields.parse(args)
         val requestedCourseName = sanitizeName(args["courseName"]?.toString()).ifBlank { "未分類" }
-        val requestedFileName = sanitizeName(args["fileName"]?.toString())
-        val userAgent = args["userAgent"]?.toString()?.takeIf { it.isNotBlank() }
-
-        val url = if (method == "GET" && formFields.isNotEmpty()) {
-            appendQuery(originalUrl, formFields)
-        } else {
-            originalUrl
-        }
-
-        if (isDebuggable()) {
-            Log.i(
-                TAG,
-                "Download start method=$method url=${redactSession(url)} fields=${formFields.joinToString(",") { it.first }}"
-            )
-        }
-
-        val requestUrlPath = URL(url).path
-        val connection = openAllowedDownloadConnection(
-            initialUrl = url,
-            initialMethod = method,
-            formFields = formFields,
-            userAgent = userAgent
-        )
-
-        try {
-            val responseCode = connection.responseCode
-            if (isDebuggable()) {
-                Log.i(
-                    TAG,
-                    "Download response code=$responseCode finalUrl=${redactSession(connection.url.toString())} " +
-                        "contentType=${connection.contentType.orEmpty()} " +
-                        "disposition=${connection.getHeaderField("Content-Disposition").orEmpty()}"
-                )
-            }
-            if (responseCode !in 200..299) {
-                throw IllegalStateException("ダウンロードに失敗しました（HTTP $responseCode）")
-            }
-            val finalUrl = connection.url.toString()
-            if (!isAllowedGakujoUrl(finalUrl)) {
-                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
-            }
-
-            val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
-                ?: "application/octet-stream"
-            val dispositionName = GakujoContentDisposition.fileName(connection.getHeaderField("Content-Disposition"))
-            val desiredName = chooseFileName(
-                requestedName = requestedFileName,
-                dispositionName = dispositionName,
-                url = finalUrl,
-                mimeType = mimeType
-            )
+        return withDownloadResponse(args) { desiredName, mimeType, openInput ->
             val courseName = if (autoSortByCourse) {
                 chooseCourseFolderName(requestedCourseName, desiredName)
             } else {
@@ -1235,7 +1183,7 @@ class MainActivity : FlutterActivity() {
             }
             val parent = if (autoSortByCourse) ensureDirectory(root, courseName) else root
             // Keep in-progress downloads out of each other's duplicate checks.
-            return synchronized(downloadFolderLock) {
+            synchronized(downloadFolderLock) {
                 val allocatedName = uniqueName(
                     parent = parent,
                     desiredName = desiredName
@@ -1243,12 +1191,7 @@ class MainActivity : FlutterActivity() {
                 val file = parent.createFile(mimeType, allocatedName)
                     ?: throw IllegalStateException("ファイルを作成できませんでした")
                 GakujoDownloadStreams.copy(
-                    openInput = {
-                        GakujoDownloadResponsePolicy.openValidated(
-                            connection.inputStream, requestedFileName, mimeType, dispositionName,
-                            urlPath = requestUrlPath
-                        )
-                    },
+                    openInput = openInput,
                     openOutput = {
                         contentResolver.openOutputStream(file.uri)
                             ?: throw IllegalStateException("ファイルを書き込めませんでした")
@@ -1278,12 +1221,100 @@ class MainActivity : FlutterActivity() {
                     alreadySaved = existing != null
                 )
             }
-        } finally {
-            connection.disconnect()
         }
     }
 
     private fun performDownloadToUri(args: Map<*, *>, destination: Uri): SavedDownload {
+        return withDownloadResponse(args) { desiredName, _, openInput ->
+            val finalName = displayName(destination) ?: desiredName
+            // The picker can return an existing document selected for overwrite.
+            val initialSize = try {
+                contentResolver.query(destination, arrayOf(OpenableColumns.SIZE), null, null, null)
+                    ?.use { cursor ->
+                        val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if (cursor.moveToFirst() && index >= 0 && !cursor.isNull(index)) {
+                            cursor.getLong(index)
+                        } else {
+                            null
+                        }
+                    }
+            } catch (error: Exception) {
+                Log.w(TAG, "Could not determine picked download size", error)
+                null
+            }
+            // Stage and bound the response before opening a picker destination:
+            // it may be an existing document and opening it can truncate it.
+            val staged = java.io.File.createTempFile("gakujo-download-", ".part", cacheDir)
+            try {
+                GakujoDownloadStreams.copy(
+                    openInput = openInput,
+                    openOutput = { staged.outputStream() }
+                )
+                GakujoDownloadStreams.copy(
+                    openInput = { staged.inputStream() },
+                    openOutput = {
+                        // "wt" truncates a picked existing document; plain "w" may not.
+                        contentResolver.openOutputStream(destination, "wt")
+                            ?: throw IllegalStateException("ファイルを書き込めませんでした")
+                    },
+                    cleanupFailedDestination = {
+                        if (GakujoDownloadStreams.shouldDeleteFailedPickedDestination(initialSize)) {
+                            try {
+                                if (!DocumentsContract.deleteDocument(contentResolver, destination)) {
+                                    Log.w(TAG, "Could not delete incomplete picked download")
+                                }
+                            } catch (error: Exception) {
+                                Log.w(TAG, "Failed to delete incomplete picked download", error)
+                            }
+                        }
+                    }
+                )
+            } finally {
+                if (!staged.delete()) Log.w(TAG, "Could not delete staged download")
+            }
+            if (isDebuggable()) {
+                Log.i(TAG, "Download saved file=$finalName")
+            }
+            SavedDownload(
+                fileName = finalName,
+                courseName = "",
+                location = destination.toString()
+            )
+        }
+    }
+
+    private fun chooseFileName(
+        requestedName: String,
+        dispositionName: String?,
+        url: String,
+        mimeType: String
+    ): String {
+        val primary = requestedName
+            .ifBlank { null }
+            ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
+        val fromUrl = Uri.parse(url).lastPathSegment
+            ?.let { sanitizeName(decodeUrlComponentOrRaw(it)) }
+            ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
+        val base = GakujoDownloadFilePolicy.preferredBaseName(
+            requestedName = primary,
+            dispositionName = sanitizeName(dispositionName),
+            urlName = fromUrl
+        )
+        val name = if (hasUsefulExtension(base)) {
+            base
+        } else {
+            val extension = extensionFromName(dispositionName)
+                ?: extensionFromName(fromUrl)
+                ?: extensionFromMime(mimeType)
+            if (extension == null) base else "$base.$extension"
+        }
+        return GakujoDownloadFilePolicy.boundedName(name)
+    }
+
+    private fun withDownloadResponse(
+        args: Map<*, *>,
+        save: (desiredName: String, mimeType: String, openInput: () -> InputStream) -> SavedDownload
+    ): SavedDownload {
         val originalUrl = args["url"].toString()
         val method = args["method"]?.toString()?.uppercase(Locale.ROOT) ?: "GET"
         val formFields = GakujoDownloadFormFields.parse(args)
@@ -1338,96 +1369,15 @@ class MainActivity : FlutterActivity() {
                 url = finalUrl,
                 mimeType = mimeType
             )
-            val finalName = displayName(destination) ?: desiredName
-            // The picker can return an existing document selected for overwrite.
-            val initialSize = try {
-                contentResolver.query(destination, arrayOf(OpenableColumns.SIZE), null, null, null)
-                    ?.use { cursor ->
-                        val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-                        if (cursor.moveToFirst() && index >= 0 && !cursor.isNull(index)) {
-                            cursor.getLong(index)
-                        } else {
-                            null
-                        }
-                    }
-            } catch (error: Exception) {
-                Log.w(TAG, "Could not determine picked download size", error)
-                null
-            }
-            // Stage and bound the response before opening a picker destination:
-            // it may be an existing document and opening it can truncate it.
-            val staged = java.io.File.createTempFile("gakujo-download-", ".part", cacheDir)
-            try {
-                GakujoDownloadStreams.copy(
-                    openInput = {
-                        GakujoDownloadResponsePolicy.openValidated(
-                            connection.inputStream, requestedFileName, mimeType, dispositionName,
-                            urlPath = requestUrlPath
-                        )
-                    },
-                    openOutput = { staged.outputStream() }
+            return save(desiredName, mimeType) {
+                GakujoDownloadResponsePolicy.openValidated(
+                    connection.inputStream, requestedFileName, mimeType, dispositionName,
+                    urlPath = requestUrlPath
                 )
-                GakujoDownloadStreams.copy(
-                    openInput = { staged.inputStream() },
-                    openOutput = {
-                        // "wt" truncates a picked existing document; plain "w" may not.
-                        contentResolver.openOutputStream(destination, "wt")
-                            ?: throw IllegalStateException("ファイルを書き込めませんでした")
-                    },
-                    cleanupFailedDestination = {
-                        if (GakujoDownloadStreams.shouldDeleteFailedPickedDestination(initialSize)) {
-                            try {
-                                if (!DocumentsContract.deleteDocument(contentResolver, destination)) {
-                                    Log.w(TAG, "Could not delete incomplete picked download")
-                                }
-                            } catch (error: Exception) {
-                                Log.w(TAG, "Failed to delete incomplete picked download", error)
-                            }
-                        }
-                    }
-                )
-            } finally {
-                if (!staged.delete()) Log.w(TAG, "Could not delete staged download")
             }
-            if (isDebuggable()) {
-                Log.i(TAG, "Download saved file=$finalName")
-            }
-            return SavedDownload(
-                fileName = finalName,
-                courseName = "",
-                location = destination.toString()
-            )
         } finally {
             connection.disconnect()
         }
-    }
-
-    private fun chooseFileName(
-        requestedName: String,
-        dispositionName: String?,
-        url: String,
-        mimeType: String
-    ): String {
-        val primary = requestedName
-            .ifBlank { null }
-            ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
-        val fromUrl = Uri.parse(url).lastPathSegment
-            ?.let { sanitizeName(decodeUrlComponentOrRaw(it)) }
-            ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
-        val base = GakujoDownloadFilePolicy.preferredBaseName(
-            requestedName = primary,
-            dispositionName = sanitizeName(dispositionName),
-            urlName = fromUrl
-        )
-        val name = if (hasUsefulExtension(base)) {
-            base
-        } else {
-            val extension = extensionFromName(dispositionName)
-                ?: extensionFromName(fromUrl)
-                ?: extensionFromMime(mimeType)
-            if (extension == null) base else "$base.$extension"
-        }
-        return GakujoDownloadFilePolicy.boundedName(name)
     }
 
     private fun openAllowedDownloadConnection(
