@@ -133,6 +133,21 @@ const String gakujoReportDraftJs = r'''
     };
   }
 
+  // web_scripts/src/shared/direct_frame_documents.ts
+  function directFrameDocuments() {
+    var docs = [document];
+    var frames = document.querySelectorAll("iframe,frame");
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        if (frames[i].contentWindow && frames[i].contentWindow.document) {
+          docs.push(frames[i].contentWindow.document);
+        }
+      } catch (e) {
+      }
+    }
+    return docs;
+  }
+
   // web_scripts/src/report_draft/storage_helpers.ts
   var retentionMs = 14 * 24 * 60 * 60 * 1e3;
   function isDraftKey(key) {
@@ -177,19 +192,6 @@ const String gakujoReportDraftJs = r'''
       return;
     }
     window.__MBG_REPORT_DRAFT_VERSION = version;
-    function documents() {
-      var result = [document];
-      var frames = document.querySelectorAll("iframe,frame");
-      for (var i = 0; i < frames.length; i += 1) {
-        try {
-          if (frames[i].contentWindow && frames[i].contentWindow.document) {
-            result.push(frames[i].contentWindow.document);
-          }
-        } catch (e) {
-        }
-      }
-      return result;
-    }
     function compactText(text) {
       return String(text || "").replace(/\s+/g, " ").trim();
     }
@@ -1114,7 +1116,7 @@ const String gakujoReportDraftJs = r'''
       return true;
     }
     function apply() {
-      var docs = documents();
+      var docs = directFrameDocuments();
       var applied = false;
       for (var i = 0; i < docs.length; i += 1) {
         try {

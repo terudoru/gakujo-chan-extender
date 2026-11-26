@@ -1,4 +1,4 @@
-export {};
+import { allDocuments, sessionValue, setSessionValue } from '../shared/autofill_page.js';
 
 declare const __mbgConfig: { debugFixture: boolean; debugLogging: boolean; maxAttempts: number; intervalMillis: number; token: string; secretKey: string; autoSubmit: boolean; inputName: string };
 
@@ -22,42 +22,6 @@ function twoFactorAutofill() {
     var normalizedUrl = location.origin + location.pathname.replace(/;[^/]*/g, '');
     return 'MBG_2FA_AUTOFILL_' + suffix + ':' + normalizedUrl + ':' +
       secretKey;
-  }
-
-  function sessionValue(key: string) {
-    try {
-      return window.sessionStorage && window.sessionStorage.getItem(key);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function setSessionValue(key: string, value: string) {
-    try {
-      if (window.sessionStorage) {
-        window.sessionStorage.setItem(key, value);
-      }
-    } catch (_) {
-    }
-  }
-
-  function allDocuments() {
-    var documents: Document[] = [];
-    function collect(win: Window) {
-      try {
-        if (!win || !win.document || documents.indexOf(win.document) !== -1) {
-          return;
-        }
-        documents.push(win.document);
-        var frames = Array.prototype.slice.call(win.document.querySelectorAll('iframe, frame'));
-        for (var i = 0; i < frames.length; i += 1) {
-          collect(frames[i].contentWindow);
-        }
-      } catch (_) {
-      }
-    }
-    collect(window);
-    return documents;
   }
 
   function hasTwoFactorError() {

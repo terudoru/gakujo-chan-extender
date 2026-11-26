@@ -70,6 +70,27 @@ const String _gakujoCalendarOfficialScheduleExportExecutionJsPrefix =
     };
   }
 
+  // web_scripts/src/shared/calendar_schedule_dom.ts
+  function findInCalendarFrames(win, inspect) {
+    try {
+      if (!win || !win.document) {
+        return null;
+      }
+      const result = inspect(win.document);
+      if (result) {
+        return result;
+      }
+      for (let i = 0; i < win.frames.length; i += 1) {
+        const found = findInCalendarFrames(win.frames[i], inspect);
+        if (found) {
+          return found;
+        }
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+
   // web_scripts/src/calendar_official_schedule_export_execution/main.ts
   function calendarOfficialScheduleExportExecution() {
     var shouldActivate = __mbgConfig.shouldActivate;
@@ -136,25 +157,6 @@ const String _gakujoCalendarOfficialScheduleExportExecutionJsPrefix =
       }
       return missingCandidate;
     }
-    function collect(win) {
-      try {
-        if (!win || !win.document) {
-          return null;
-        }
-        var found = inspectDocument(win.document);
-        if (found) {
-          return found;
-        }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          found = collect(win.frames[i]);
-          if (found) {
-            return found;
-          }
-        }
-      } catch (e) {
-      }
-      return null;
-    }
     function formCounts() {
       var values = [];
       function collectCounts(win) {
@@ -176,7 +178,7 @@ const String _gakujoCalendarOfficialScheduleExportExecutionJsPrefix =
       collectCounts(window);
       return values;
     }
-    return JSON.stringify(collect(window) || {
+    return JSON.stringify(findInCalendarFrames(window, inspectDocument) || {
       status: "not_found",
       label: "",
       url: "",

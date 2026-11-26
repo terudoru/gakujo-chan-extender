@@ -161,6 +161,36 @@ void main() {
     expect(payload['body'], isNot(contains('check1=true')));
   });
 
+  test('official calendar scripts stop at the first matching document',
+      () async {
+    for (final activate in [false, true]) {
+      for (final kind in ['google', 'execution']) {
+        final script = kind == 'google'
+            ? GakujoCalendarExport.officialGoogleScheduleIntegrationScript(
+                activate: activate,
+              )
+            : GakujoCalendarExport.officialScheduleExportExecutionScript(
+                activate: activate,
+                startDate: '2026/10/02',
+                endDate: '2026/12/01',
+              );
+        final result = await Process.run(
+          'node',
+          [
+            'test/support/gakujo_official_calendar_frames_harness.cts',
+            script,
+            kind,
+            '$activate',
+          ],
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+        expect(result.exitCode, 0,
+            reason: 'kind=$kind activate=$activate: ${result.stderr}');
+      }
+    }
+  });
+
   test('the registration page lists each class with its classroom', () {
     String cell(String code, String weekday, String period, String text) =>
         '<div class="tblDivNml"><a href="" onclick="return '

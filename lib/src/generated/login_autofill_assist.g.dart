@@ -140,6 +140,41 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
     };
   }
 
+  // web_scripts/src/shared/autofill_page.ts
+  function sessionValue(key) {
+    try {
+      return window.sessionStorage && window.sessionStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  }
+  function setSessionValue(key, value) {
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(key, value);
+      }
+    } catch (_) {
+    }
+  }
+  function allDocuments() {
+    var documents = [];
+    function collect(win) {
+      try {
+        if (!win || !win.document || documents.indexOf(win.document) !== -1) {
+          return;
+        }
+        documents.push(win.document);
+        var frames = Array.prototype.slice.call(win.document.querySelectorAll("iframe, frame"));
+        for (var i = 0; i < frames.length; i += 1) {
+          collect(frames[i].contentWindow);
+        }
+      } catch (_) {
+      }
+    }
+    collect(window);
+    return documents;
+  }
+
   // web_scripts/src/login_autofill_assist/main.ts
   function loginAutofillAssist() {
     if (location.protocol !== "https:" || location.origin !== "https://gakujo.iess.niigata-u.ac.jp") {
@@ -193,21 +228,6 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
     }
     function sessionKey(suffix) {
       return pageSessionKey(suffix) + ":" + (savedCredentialKey || "no-credentials");
-    }
-    function sessionValue(key) {
-      try {
-        return window.sessionStorage && window.sessionStorage.getItem(key);
-      } catch (_) {
-        return null;
-      }
-    }
-    function setSessionValue(key, value) {
-      try {
-        if (window.sessionStorage) {
-          window.sessionStorage.setItem(key, value);
-        }
-      } catch (_) {
-      }
     }
     function removeSessionValue(key) {
       try {
@@ -298,24 +318,6 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       var pageWindow = element.ownerDocument.defaultView || window;
       var style = pageWindow.getComputedStyle(element);
       return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && element.getClientRects().length > 0;
-    }
-    function allDocuments() {
-      var documents = [];
-      function collect(win) {
-        try {
-          if (!win || !win.document || documents.indexOf(win.document) !== -1) {
-            return;
-          }
-          documents.push(win.document);
-          var frames = Array.prototype.slice.call(win.document.querySelectorAll("iframe, frame"));
-          for (var i = 0; i < frames.length; i += 1) {
-            collect(frames[i].contentWindow);
-          }
-        } catch (_) {
-        }
-      }
-      collect(window);
-      return documents;
     }
     function hasAuthenticatedMarker() {
       var documents = allDocuments();

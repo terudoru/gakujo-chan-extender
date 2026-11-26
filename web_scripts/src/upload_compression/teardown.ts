@@ -1,4 +1,4 @@
-export {};
+import { directFrameDocuments } from '../shared/direct_frame_documents.js';
 function uploadCompressionTeardown() {
   window.__MBG_UPLOAD_COMPRESSION_ENABLED = false;
   if (window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE) window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE();
@@ -16,17 +16,7 @@ function uploadCompressionTeardown() {
     if (owner[key] === entry.wrapper) owner[key] = entry.original;
   });
   window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES = [];
-  var docs = [document];
-  var frames = document.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>('iframe,frame');
-  for (var i = 0; i < frames.length; i += 1) {
-    try {
-      if (frames[i].contentWindow && frames[i].contentWindow!.document) {
-        docs.push(frames[i].contentWindow!.document);
-      }
-    } catch (e) {
-      // Cross-origin frames cannot be inspected.
-    }
-  }
+  var docs = directFrameDocuments();
   for (var d = 0; d < docs.length; d += 1) {
     var inputs = docs[d].querySelectorAll<HTMLInputElement>('input[type="file"]');
     for (var k = 0; k < inputs.length; k += 1) {

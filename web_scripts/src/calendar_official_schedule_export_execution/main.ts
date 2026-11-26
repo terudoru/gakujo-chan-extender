@@ -1,4 +1,5 @@
 import { configureInputs, diagnosticsFor, isExportForm, normalize, textOf } from '../shared/calendar_export_form.js';
+import { findInCalendarFrames } from '../shared/calendar_schedule_dom.js';
 
 declare const __mbgConfig: { shouldActivate: boolean; startDate: string; endDate: string };
 
@@ -72,24 +73,6 @@ function calendarOfficialScheduleExportExecution() {
     }
     return missingCandidate;
   }
-  function collect(win: Window): ReturnType<typeof inspectDocument> {
-    try {
-      if (!win || !win.document) {
-        return null;
-      }
-      var found = inspectDocument(win.document);
-      if (found) {
-        return found;
-      }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        found = collect(win.frames[i]);
-        if (found) {
-          return found;
-        }
-      }
-    } catch (e) {}
-    return null;
-  }
   function formCounts() {
     var values: { url: string; title: string; formCount: number }[] = [];
     function collectCounts(win: Window) {
@@ -110,7 +93,7 @@ function calendarOfficialScheduleExportExecution() {
     collectCounts(window);
     return values;
   }
-  return JSON.stringify(collect(window) || {
+  return JSON.stringify(findInCalendarFrames(window, inspectDocument) || {
     status: 'not_found',
     label: '',
     url: '',

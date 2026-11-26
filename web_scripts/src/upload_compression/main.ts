@@ -1,4 +1,5 @@
 import { readBoundedOfficeStream, validateOfficeDirectory } from '../shared/office_zip.js';
+import { directFrameDocuments } from '../shared/direct_frame_documents.js';
 import { watchPage } from '../shared/page_watch.js';
 import { mbgValidateImage } from '../shared/image_bounds.js';
 import { MAX_PDF_BYTES, type QpdfWorkerRequest, type QpdfWorkerResponse } from '../shared/qpdf_worker_messages.js';
@@ -40,21 +41,6 @@ function uploadCompression() {
   var officeTypes: Record<string, string> = {
     docx: 'word', docm: 'word', pptx: 'ppt', pptm: 'ppt', xlsx: 'xl', xlsm: 'xl'
   };
-
-  function documents() {
-    var result = [document];
-    var frames = document.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>('iframe,frame');
-    for (var i = 0; i < frames.length; i += 1) {
-      try {
-        if (frames[i].contentWindow && frames[i].contentWindow!.document) {
-          result.push(frames[i].contentWindow!.document);
-        }
-      } catch (e) {
-        // Cross-origin frames cannot be inspected.
-      }
-    }
-    return result;
-  }
 
   // Inputs inside the Gakujo iframe belong to that frame's realm.
   function viewOf(input: HTMLInputElement) {
@@ -607,7 +593,7 @@ function uploadCompression() {
     var view = doc.defaultView;
     var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype as HTMLFormElement & MbgCompressionHookOwner;
     if (!prototype) return;
-    var live = documents().map(function(liveDoc) {
+    var live = directFrameDocuments().map(function(liveDoc) {
       var liveView = liveDoc.defaultView;
       return liveView && liveView.HTMLFormElement && liveView.HTMLFormElement.prototype;
     });
@@ -783,7 +769,7 @@ function uploadCompression() {
   }
 
   function attach() {
-    var docs = documents();
+    var docs = directFrameDocuments();
     for (var i = 0; i < docs.length; i += 1) {
       var doc = docs[i];
       wrapFormSubmits(doc);

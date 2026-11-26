@@ -5,6 +5,21 @@
 const String gakujoUploadCompressionTeardownJs = r'''
 "use strict";
 (() => {
+  // web_scripts/src/shared/direct_frame_documents.ts
+  function directFrameDocuments() {
+    var docs = [document];
+    var frames = document.querySelectorAll("iframe,frame");
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        if (frames[i].contentWindow && frames[i].contentWindow.document) {
+          docs.push(frames[i].contentWindow.document);
+        }
+      } catch (e) {
+      }
+    }
+    return docs;
+  }
+
   // web_scripts/src/upload_compression/teardown.ts
   function uploadCompressionTeardown() {
     window.__MBG_UPLOAD_COMPRESSION_ENABLED = false;
@@ -22,16 +37,7 @@ const String gakujoUploadCompressionTeardownJs = r'''
       if (owner[key] === entry.wrapper) owner[key] = entry.original;
     });
     window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES = [];
-    var docs = [document];
-    var frames = document.querySelectorAll("iframe,frame");
-    for (var i = 0; i < frames.length; i += 1) {
-      try {
-        if (frames[i].contentWindow && frames[i].contentWindow.document) {
-          docs.push(frames[i].contentWindow.document);
-        }
-      } catch (e) {
-      }
-    }
+    var docs = directFrameDocuments();
     for (var d = 0; d < docs.length; d += 1) {
       var inputs = docs[d].querySelectorAll('input[type="file"]');
       for (var k = 0; k < inputs.length; k += 1) {

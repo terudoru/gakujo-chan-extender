@@ -1,4 +1,4 @@
-export {};
+import { findInCalendarFrames } from '../shared/calendar_schedule_dom.js';
 
 declare const __mbgConfig: { shouldActivate: boolean };
 
@@ -288,24 +288,6 @@ function calendarOfficialGoogleScheduleIntegration() {
     }
     return null;
   }
-  function collect(win: Window): ReturnType<typeof inspectDocument> {
-    try {
-      if (!win || !win.document) {
-        return null;
-      }
-      var found = inspectDocument(win.document);
-      if (found) {
-        return found;
-      }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        found = collect(win.frames[i]);
-        if (found) {
-          return found;
-        }
-      }
-    } catch (e) {}
-    return null;
-  }
   function allDiagnostics() {
     var values: ReturnType<typeof diagnosticsFor>[] = [];
     function collectDiagnostics(win: Window) {
@@ -322,7 +304,7 @@ function calendarOfficialGoogleScheduleIntegration() {
     collectDiagnostics(window);
     return values;
   }
-  return JSON.stringify(collect(window) || {
+  return JSON.stringify(findInCalendarFrames(window, inspectDocument) || {
     status: 'not_found',
     label: '',
     url: '',

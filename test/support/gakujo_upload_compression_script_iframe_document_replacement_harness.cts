@@ -11,6 +11,8 @@ let nextTimer = 0;
 function makeDocument() {
   return {
     documentElement: {},
+    frames: [],
+    fileInputs: [],
     defaultView: {HTMLFormElement: class {
   [key: string]: any;
       submit() {}
@@ -19,15 +21,22 @@ function makeDocument() {
     addEventListener() {},
     removeEventListener() {},
     querySelectorAll(selector) {
-      return this === top && selector === 'iframe,frame' ? [iframe] : [];
+      if (selector === 'iframe,frame') return this.frames;
+      if (selector === 'input[type="file"]') return this.fileInputs;
+      return [];
     },
   };
 }
 const top: any = makeDocument();
 const iframe: any = {contentWindow: {document: makeDocument(), frames: []}};
+const denied = {contentWindow: {get document() { throw new Error('cross-origin'); }}};
+const nested = {contentWindow: {document: makeDocument(), frames: []}};
+const sibling = {contentWindow: {document: makeDocument(), frames: [nested.contentWindow]}};
+sibling.contentWindow.document.frames.push(nested);
+top.frames.push(iframe, denied, sibling);
 const window: any = {
   document: top,
-  frames: [iframe.contentWindow],
+  frames: top.frames.map(frame => frame.contentWindow),
   setInterval(callback, ms) {
     intervals.set(++nextTimer, {callback, ms});
     return nextTimer;
@@ -47,9 +56,11 @@ const context: any = vm.createContext({window, document: top});
 vm.runInContext(upload, context);
 
 function checkHooks() {
-  const liveDocuments: any = [top, iframe.contentWindow.document];
+  const liveDocuments: any = [top, iframe.contentWindow.document, sibling.contentWindow.document];
   const hooks = window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES;
   assert.equal(hooks.length, liveDocuments.length * 2);
+  assert.equal(Object.hasOwn(nested.contentWindow.document, '__mbgUploadCompressionAttached'), false,
+    'only direct frame documents are attached');
   for (const doc of liveDocuments) {
     for (const method of ['submit', 'requestSubmit']) {
       assert.equal(hooks.filter(entry =>
@@ -73,7 +84,7 @@ function checkWatching() {
   assert.equal(intervals.size, 1, 'reinjection must not duplicate the watcher');
   assert.equal([...intervals.values()][0].ms, scenario.withObserver ? 5000 : 1000);
   assert.equal(observers.filter(observer => observer.connected).length,
-    scenario.withObserver ? 2 : 0);
+    scenario.withObserver ? 4 : 0);
   if (scenario.withObserver) {
     assert.equal(window.__MBG_PAGE_WATCH_STATE.fallbacks['5000'].runs.length, 1);
   }
@@ -93,7 +104,18 @@ if (scenario.withObserver) {
   observers.find(observer => observer.connected).callback();
   assert.equal(timers.size, 1);
 }
+const cancellations: string[] = [];
+for (const [name, doc] of [
+  ['top', top],
+  ['first', iframe.contentWindow.document],
+  ['later', sibling.contentWindow.document],
+  ['nested', nested.contentWindow.document],
+] as const) {
+  doc.fileInputs.push({__mbgPdfCompressionCancel() { cancellations.push(name); }});
+}
 vm.runInContext(teardown, context);
+assert.deepEqual(cancellations, ['top', 'first', 'later'],
+  'teardown skips the inaccessible frame and leaves nested inputs untouched');
 vm.runInContext(teardown, context);
 checkStopped();
 

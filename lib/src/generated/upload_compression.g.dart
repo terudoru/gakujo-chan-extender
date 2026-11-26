@@ -77,6 +77,21 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
     });
   }
 
+  // web_scripts/src/shared/direct_frame_documents.ts
+  function directFrameDocuments() {
+    var docs = [document];
+    var frames = document.querySelectorAll("iframe,frame");
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        if (frames[i].contentWindow && frames[i].contentWindow.document) {
+          docs.push(frames[i].contentWindow.document);
+        }
+      } catch (e) {
+      }
+    }
+    return docs;
+  }
+
   // web_scripts/src/shared/page_watch.ts
   function collectPageDocuments(win) {
     var docs = [];
@@ -315,19 +330,6 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
       xlsx: "xl",
       xlsm: "xl"
     };
-    function documents() {
-      var result = [document];
-      var frames = document.querySelectorAll("iframe,frame");
-      for (var i = 0; i < frames.length; i += 1) {
-        try {
-          if (frames[i].contentWindow && frames[i].contentWindow.document) {
-            result.push(frames[i].contentWindow.document);
-          }
-        } catch (e) {
-        }
-      }
-      return result;
-    }
     function viewOf(input) {
       return input.ownerDocument && input.ownerDocument.defaultView || window;
     }
@@ -855,7 +857,7 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
       var view = doc.defaultView;
       var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype;
       if (!prototype) return;
-      var live = documents().map(function(liveDoc) {
+      var live = directFrameDocuments().map(function(liveDoc) {
         var liveView = liveDoc.defaultView;
         return liveView && liveView.HTMLFormElement && liveView.HTMLFormElement.prototype;
       });
@@ -1018,7 +1020,7 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
       });
     }
     function attach() {
-      var docs = documents();
+      var docs = directFrameDocuments();
       for (var i = 0; i < docs.length; i += 1) {
         var doc = docs[i];
         wrapFormSubmits(doc);

@@ -12,6 +12,41 @@ String gakujoTwoFactorAutofillJs(Map<String, Object?> config) =>
 const String _gakujoTwoFactorAutofillJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
+  // web_scripts/src/shared/autofill_page.ts
+  function sessionValue(key) {
+    try {
+      return window.sessionStorage && window.sessionStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  }
+  function setSessionValue(key, value) {
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(key, value);
+      }
+    } catch (_) {
+    }
+  }
+  function allDocuments() {
+    var documents = [];
+    function collect(win) {
+      try {
+        if (!win || !win.document || documents.indexOf(win.document) !== -1) {
+          return;
+        }
+        documents.push(win.document);
+        var frames = Array.prototype.slice.call(win.document.querySelectorAll("iframe, frame"));
+        for (var i = 0; i < frames.length; i += 1) {
+          collect(frames[i].contentWindow);
+        }
+      } catch (_) {
+      }
+    }
+    collect(window);
+    return documents;
+  }
+
   // web_scripts/src/two_factor_autofill/main.ts
   function twoFactorAutofill() {
     if (__mbgConfig.debugFixture ? location.href !== "file:///android_asset/qa/two_factor.html" : location.protocol !== "https:" || location.hostname !== "gakujo.iess.niigata-u.ac.jp" || location.port && location.port !== "443") {
@@ -31,39 +66,6 @@ const String _gakujoTwoFactorAutofillJsPrefix = r'''(function(__mbgConfig) {
     function sessionKey(suffix) {
       var normalizedUrl = location.origin + location.pathname.replace(/;[^/]*/g, "");
       return "MBG_2FA_AUTOFILL_" + suffix + ":" + normalizedUrl + ":" + secretKey;
-    }
-    function sessionValue(key) {
-      try {
-        return window.sessionStorage && window.sessionStorage.getItem(key);
-      } catch (_) {
-        return null;
-      }
-    }
-    function setSessionValue(key, value) {
-      try {
-        if (window.sessionStorage) {
-          window.sessionStorage.setItem(key, value);
-        }
-      } catch (_) {
-      }
-    }
-    function allDocuments() {
-      var documents = [];
-      function collect(win) {
-        try {
-          if (!win || !win.document || documents.indexOf(win.document) !== -1) {
-            return;
-          }
-          documents.push(win.document);
-          var frames = Array.prototype.slice.call(win.document.querySelectorAll("iframe, frame"));
-          for (var i = 0; i < frames.length; i += 1) {
-            collect(frames[i].contentWindow);
-          }
-        } catch (_) {
-        }
-      }
-      collect(window);
-      return documents;
     }
     function hasTwoFactorError() {
       var documents = allDocuments();

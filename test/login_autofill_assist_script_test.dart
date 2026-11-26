@@ -87,6 +87,26 @@ void main() {
     expect(result['consoleLogs'], isEmpty);
   });
 
+  test('denied session storage still allows just one login attempt', () async {
+    final result = await _evaluateLoginAssist(
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'text': 'Login'},
+      ],
+      setupScript: '''
+Object.defineProperty(window, 'sessionStorage', {
+  get() { throw new Error('storage denied'); }
+});
+''',
+      frameBodyText: '',
+      monitorTicks: 3,
+    );
+
+    expect(result['clickCount'], 1);
+    expect(result['sessionValues'], isEmpty);
+  });
+
   test('a navigated external page cannot bypass the origin check', () async {
     final result = await _evaluateLoginAssist(
       [
@@ -281,6 +301,22 @@ window.setTimeout = function(callback) {
       expect(result['clickCount'], 0);
       expect(_hasReport(result, 'ready-no-submit', 'target-found'), isTrue);
     }
+  });
+
+  test('a hidden sibling login error blocks an eligible form', () async {
+    final result = await _evaluateLoginAssist(
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'text': 'Login'},
+      ],
+      hiddenSiblingBodyText: 'Login failed',
+      frameBodyText: '',
+    );
+
+    expect(result['clickCount'], 0);
+    expect(_valueOf(result, 'password'), isEmpty);
+    expect(_hasReport(result, 'ready-no-submit', 'target-found'), isTrue);
   });
 
   for (final url in [
@@ -880,6 +916,7 @@ Future<Map<String, dynamic>> _evaluateLoginAssist(
   String setupScript = '',
   String? url,
   String? frameBodyText,
+  String? hiddenSiblingBodyText,
   int monitorTicks = 0,
 }) async {
   final script = LoginAutofillAssistScript.build(
@@ -893,6 +930,7 @@ Future<Map<String, dynamic>> _evaluateLoginAssist(
     elements,
     url: url,
     frameBodyText: frameBodyText,
+    hiddenSiblingBodyText: hiddenSiblingBodyText,
     monitorTicks: monitorTicks,
   );
 }
@@ -903,6 +941,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   String? url,
   String? teardownScript,
   String? frameBodyText,
+  String? hiddenSiblingBodyText,
   List<String>? frameVisibilities,
   bool deferTimers = false,
   bool simulateAuthenticatedTimeout = false,
@@ -916,6 +955,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
       'url': url,
       'teardownScript': teardownScript,
       'frameBodyText': frameBodyText,
+      'hiddenSiblingBodyText': hiddenSiblingBodyText,
       'frameVisibilities': frameVisibilities,
       'deferTimers': deferTimers,
       'simulateAuthenticatedTimeout': simulateAuthenticatedTimeout,

@@ -233,6 +233,13 @@ function appendFrame(parent: any, visibility = 'visible') {
   return doc;
 }
 
+if (spec.hiddenSiblingBodyText) {
+  const hidden = appendFrame(document, 'hidden');
+  hidden.body.innerText = spec.hiddenSiblingBodyText;
+  const inaccessible = new FakeElement('iframe', {});
+  inaccessible.contentWindow = {get document() { throw new Error('cross-origin'); }};
+  document.frames.push(inaccessible);
+}
 let loginDocument = document;
 for (const visibility of spec.frameVisibilities ?? (spec.frameBodyText != null ? ['visible'] : [])) {
   loginDocument = appendFrame(loginDocument, visibility);

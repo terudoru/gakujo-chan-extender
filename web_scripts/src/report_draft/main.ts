@@ -1,4 +1,5 @@
 import { watchPage } from '../shared/page_watch.js';
+import { directFrameDocuments } from '../shared/direct_frame_documents.js';
 import { cleanupMigrationSources, rememberMigration } from './storage_helpers.js';
 export {};
 type DraftValue = string | boolean | string[] | null;
@@ -25,21 +26,6 @@ function reportDraft() {
     return;
   }
   window.__MBG_REPORT_DRAFT_VERSION = version;
-
-  function documents() {
-    var result: DraftDocument[] = [document as DraftDocument];
-    var frames = document.querySelectorAll<HTMLIFrameElement>('iframe,frame');
-    for (var i = 0; i < frames.length; i += 1) {
-      try {
-        if (frames[i].contentWindow && frames[i].contentWindow!.document) {
-          result.push(frames[i].contentWindow!.document as DraftDocument);
-        }
-      } catch (e) {
-        // Cross-origin frames cannot be inspected.
-      }
-    }
-    return result;
-  }
 
   function compactText(text: unknown) {
     return String(text || '').replace(/\s+/g, ' ').trim();
@@ -1035,7 +1021,7 @@ function reportDraft() {
   }
 
   function apply() {
-    var docs = documents();
+    var docs = directFrameDocuments() as DraftDocument[];
     var applied = false;
     for (var i = 0; i < docs.length; i += 1) {
       try {

@@ -126,6 +126,11 @@ const window = Object.assign(document.defaultView, {
   }
 });
 window.window = window;
+if (spec.denySessionStorage) {
+  Object.defineProperty(window, 'sessionStorage', {
+    get() { throw new Error('storage denied'); }
+  });
+}
 let outerFrame: FakeElement;
 let later: FakeElement;
 if (inFrame) {
@@ -135,6 +140,12 @@ if (inFrame) {
   document.querySelectorAll('iframe, frame').push(inaccessible);
   const nested = spec.inFrame === 'true';
   const outerDocument = nested ? makeDocument() : codeDocument;
+  if (spec.hiddenError) {
+    outerDocument.body.innerText = 'Invalid code';
+    const location = new URL(process.argv[4]);
+    sessionValues.set('MBG_2FA_AUTOFILL_SUBMIT_COUNT:' +
+      location.origin + location.pathname + ':no-secret', '1');
+  }
   outerFrame = attachFrame(document, outerDocument, {visibility: spec.frameVisibility});
   if (nested) attachFrame(outerDocument, codeDocument, {visibility: 'visible'});
   if (spec.laterFrame === 'true') {

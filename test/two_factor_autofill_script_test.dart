@@ -175,6 +175,37 @@ void main() {
     expect(result['consoleLogs'], isEmpty);
   });
 
+  test('denied session storage still allows a two-factor attempt', () async {
+    final result = await _evaluateTwoFactorAssist(
+      TwoFactorAutofillScript.build(token: '654321'),
+      formSettings: {'denySessionStorage': 'true', 'frameVisibility': 'visible'},
+    );
+
+    expect(result['visibleValue'], '654321');
+    expect(result['clickCount'], 1);
+    expect(result['sessionValues'], isEmpty);
+  });
+
+  test('a hidden sibling error blocks a second two-factor click', () async {
+    final result = await _evaluateTwoFactorAssist(
+      TwoFactorAutofillScript.build(token: '654321'),
+      formSettings: {
+        'frameVisibility': 'hidden',
+        'laterFrame': 'true',
+        'hiddenError': 'true',
+      },
+    );
+
+    expect(result['visibleValue'], isEmpty);
+    expect(result['laterValue'], '654321');
+    expect(result['clickCount'], 0);
+    expect(
+      (result['sessionValues'] as Map)['MBG_2FA_AUTOFILL_ERROR:'
+          'https://gakujo.iess.niigata-u.ac.jp/campussmart.do:no-secret'],
+      '1',
+    );
+  });
+
   for (final (visibility, nested) in [
     ('hidden', false),
     ('collapse', false),
