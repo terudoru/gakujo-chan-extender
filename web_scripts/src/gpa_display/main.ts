@@ -1,5 +1,5 @@
 import { watchPage } from '../shared/page_watch.js';
-export {};
+import { collectFrameDocuments } from '../shared/frame_documents.js';
 interface GradeTable {
   table: HTMLTableElement;
   headerCell: HTMLElement;
@@ -84,18 +84,7 @@ function gpaDisplay() {
   }
 
   function collectDocuments() {
-    var documents: Document[] = [];
-    function collect(win: Window) {
-      try {
-        if (win.document) {
-          documents.push(win.document);
-        }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i]);
-        }
-      } catch (e) {}
-    }
-    collect(window);
+    var documents = collectFrameDocuments();
     try {
       var mainFrame = window.document.getElementById('main-frame-if') as HTMLIFrameElement | null;
       if (mainFrame && mainFrame.contentWindow && mainFrame.contentWindow.document) {

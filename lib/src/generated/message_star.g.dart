@@ -181,6 +181,20 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
     };
   }
 
+  // web_scripts/src/shared/main_frame_document.ts
+  function mainFrameDocument() {
+    try {
+      var frame = document.getElementById("main-frame-if");
+      return frame && frame.contentWindow && frame.contentWindow.document || null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function mainFrameFirstDocuments() {
+    var frame = mainFrameDocument();
+    return frame && frame !== document ? [frame, document] : [document];
+  }
+
   // web_scripts/src/message_star/main.ts
   function messageStar() {
     var initialIds = __mbgConfig.initialIds;
@@ -199,17 +213,6 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
     var lastDetailSignatures = /* @__PURE__ */ new WeakMap();
     var listDocuments = [];
     var openedMessageKey = "__MBG_MESSAGE_STARS_OPEN_MESSAGE";
-    function candidateDocuments() {
-      var docs = [];
-      try {
-        var frame = document.getElementById("main-frame-if");
-        var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
-        if (frameDoc) docs.push(frameDoc);
-      } catch (e) {
-      }
-      if (docs.indexOf(document) < 0) docs.push(document);
-      return docs;
-    }
     function text(node) {
       return String(node && (node.innerText || node.textContent) || "").replace(/\s+/g, " ").trim();
     }
@@ -467,7 +470,7 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
     }
     function update() {
       if (disposed) return;
-      var docs = candidateDocuments();
+      var docs = mainFrameFirstDocuments();
       listDocuments.forEach(function(doc) {
         if (docs.indexOf(doc) < 0) doc.removeEventListener("click", rememberClickedMessage, true);
       });

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
-import {stripTypeScriptTypes} from 'node:module';
 import vm from 'node:vm';
+import {build} from '../web_scripts/node_modules/esbuild/lib/main.js';
 
-const source = stripTypeScriptTypes(
-  (await readFile(process.argv[2] || 'web_scripts/src/course_name_tables/main.ts', 'utf8'))
-    .replace('export {};', '')
-);
+const bundle = await build({
+  entryPoints: [process.argv[2] || 'web_scripts/src/course_name_tables/main.ts'],
+  bundle: true, format: 'iife', target: 'es2017', write: false,
+});
+const source = bundle.outputFiles[0].text;
 const cases = [
   ['<tr><th>科目名</th><th>担当教員</th></tr><tr><td>物理学</td><td>Teacher</td></tr>', '物理学'],
   ['<tr><th>担当教員</th><th>科目名</th></tr><tr><td>Teacher</td><td>物理学</td></tr>', '物理学'],
@@ -16,7 +16,7 @@ const cases = [
   ['<tr><th>科目名</th><td> </td></tr><tr><td>物理学</td></tr>', '物理学'],
   ['<tr><th>担当教員</th><td>Teacher</td></tr>', ''],
 ];
-function candidates(html: string) {
+function page(html: string, frames: object[] = []) {
   const rows = [...html.matchAll(/<tr>(.*?)<\/tr>/g)].map(row => ({
     cells: [...row[1].matchAll(/<(th|td)>(.*?)<\/\1>/g)].map(cell => ({
       tagName: cell[1].toUpperCase(), textContent: cell[2]
@@ -26,7 +26,10 @@ function candidates(html: string) {
     assert.equal(selector, 'table');
     return [{rows}];
   }};
-  const context = {window: {document, frames: []}, __mbgEntryResult: ''};
+  return {document, frames};
+}
+function candidates(html: string, frames: object[] = []) {
+  const context = {window: page(html, frames), __mbgEntryResult: ''};
   vm.runInNewContext(source, context);
   const {courseNameCandidates} = JSON.parse(context.__mbgEntryResult);
   assert.ok(Array.isArray(courseNameCandidates));
@@ -48,4 +51,15 @@ assert.deepEqual(candidates('<tr><th>科目名</th><td> </td><td>Physics</td><td
   ['Physics']);
 assert.deepEqual(candidates('<tr><th>科目名</th><td> </td><th>担当教員</th><td>Teacher</td></tr>'),
   []);
-console.log('Course name table cases passed.');
+const denied = {
+  get document() { throw new Error('Cross-origin document'); },
+  frames: [page(column + row('Pruned child'))],
+};
+const broken = page(column + row('Broken parent'), [denied, page(column + row('Pruned sibling'))]);
+Object.defineProperty(broken.frames, 0, {get() { throw new Error('Unavailable frame index'); }});
+const nested = page(column + row('Nested'));
+const first = page(column + row('First'), [{frames: [nested]}]);
+const frames = [denied, first, broken, page(column + row('Later')), nested];
+assert.deepEqual(candidates(column + row('Root'), frames),
+  ['Root', 'First', 'Nested', 'Broken parent', 'Later', 'Nested']);
+console.log('Course name table and frame cases passed.');

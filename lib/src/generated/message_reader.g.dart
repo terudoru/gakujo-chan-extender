@@ -133,6 +133,20 @@ const String gakujoMessageReaderJs = r'''
     };
   }
 
+  // web_scripts/src/shared/main_frame_document.ts
+  function mainFrameDocument() {
+    try {
+      var frame = document.getElementById("main-frame-if");
+      return frame && frame.contentWindow && frame.contentWindow.document || null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function mainFrameFirstDocuments() {
+    var frame = mainFrameDocument();
+    return frame && frame !== document ? [frame, document] : [document];
+  }
+
   // web_scripts/src/message_reader/main.ts
   function messageReader() {
     var version = 9;
@@ -160,21 +174,12 @@ const String gakujoMessageReaderJs = r'''
         cancelPendingFrame();
       }
     };
-    function mainFrameDocument() {
-      try {
-        var frame = document.getElementById("main-frame-if");
-        return frame && frame.contentWindow && frame.contentWindow.document || document;
-      } catch (e) {
-        return document;
-      }
-    }
     function messageTable(doc) {
-      doc = doc || mainFrameDocument();
+      doc = doc || mainFrameDocument() || document;
       return doc.querySelector("table.normal:nth-child(9)");
     }
     function smartphoneUnreadList() {
-      var docs = [mainFrameDocument()];
-      if (docs[0] !== document) docs.push(document);
+      var docs = mainFrameFirstDocuments();
       for (var i = 0; i < docs.length; i += 1) {
         var doc = docs[i];
         var text = doc.body && (doc.body.innerText || doc.body.textContent) || "";
@@ -240,7 +245,7 @@ const String gakujoMessageReaderJs = r'''
       return false;
     }
     function unreadUrls(limit) {
-      var doc = mainFrameDocument();
+      var doc = mainFrameDocument() || document;
       var table = messageTable(doc);
       if (!table) {
         var list = smartphoneUnreadList();

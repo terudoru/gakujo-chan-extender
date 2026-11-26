@@ -140,6 +140,16 @@ const String _gakujoReportSorterJsPrefix = r'''(function(__mbgConfig) {
     };
   }
 
+  // web_scripts/src/shared/main_frame_document.ts
+  function mainFrameDocument() {
+    try {
+      var frame = document.getElementById("main-frame-if");
+      return frame && frame.contentWindow && frame.contentWindow.document || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // web_scripts/src/report_sorter/main.ts
   function reportSorter() {
     var version = 6;
@@ -155,16 +165,8 @@ const String _gakujoReportSorterJsPrefix = r'''(function(__mbgConfig) {
     }
     window.__MBG_REPORT_SORTER_VERSION = version;
     var sortedTables = /* @__PURE__ */ new WeakSet();
-    function mainFrameDocument() {
-      try {
-        var frame = document.getElementById("main-frame-if");
-        return frame && frame.contentWindow && frame.contentWindow.document || document;
-      } catch (e) {
-        return document;
-      }
-    }
     function reportTable() {
-      var doc = mainFrameDocument();
+      var doc = mainFrameDocument() || document;
       return doc.querySelector("#enqListForm table:nth-of-type(2)") || document.querySelector("#enqListForm table:nth-of-type(2)");
     }
     function textOf(element) {

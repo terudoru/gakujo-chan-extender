@@ -1,5 +1,5 @@
 import { watchPage } from '../shared/page_watch.js';
-export {};
+import { mainFrameDocument, mainFrameFirstDocuments } from '../shared/main_frame_document.js';
 function messageReader() {
   var version = 9;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
@@ -28,23 +28,13 @@ function messageReader() {
     }
   };
 
-  function mainFrameDocument() {
-    try {
-      var frame = document.getElementById('main-frame-if') as HTMLIFrameElement | null;
-      return frame && frame.contentWindow && frame.contentWindow.document || document;
-    } catch (e) {
-      return document;
-    }
-  }
-
   function messageTable(doc?: Document) {
-    doc = doc || mainFrameDocument();
+    doc = doc || mainFrameDocument() || document;
     return doc.querySelector<HTMLTableElement>('table.normal:nth-child(9)');
   }
 
   function smartphoneUnreadList() {
-    var docs = [mainFrameDocument()];
-    if (docs[0] !== document) docs.push(document);
+    var docs = mainFrameFirstDocuments();
     for (var i = 0; i < docs.length; i += 1) {
       var doc = docs[i];
       var text = doc.body && (doc.body.innerText || doc.body.textContent) || '';
@@ -118,7 +108,7 @@ function messageReader() {
   }
 
   function unreadUrls(limit: number) {
-    var doc = mainFrameDocument();
+    var doc = mainFrameDocument() || document;
     var table = messageTable(doc);
     if (!table) {
       var list = smartphoneUnreadList();

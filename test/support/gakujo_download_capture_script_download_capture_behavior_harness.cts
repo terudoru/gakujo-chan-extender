@@ -178,6 +178,9 @@ const context: any = vm.createContext({
   URL,
   FormData: FakeFormData
 });
+if (scenario === 'courseRowAndFrame') {
+  window.frames.unshift({get document() { throw new Error('Cross-origin document'); }});
+}
 vm.runInContext(buildScript, context);
 
 function submitEvent(form?: any, submitter?: any) {
@@ -229,6 +232,8 @@ function behavior() {
     click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
     childDocument.querySelectorAll = selector => selector === 'h1' ?
       [{innerText: 'Physics'}, {innerText: 'Chemistry'}] : [];
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    childDocument.querySelectorAll = () => [];
     click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
     return {captured};
   }

@@ -335,7 +335,7 @@ void main() {
     expect(result['reloadCount'], 1);
   });
 
-  for (final frame in ['empty', 'list', 'none', 'inaccessible']) {
+  for (final frame in ['empty', 'list', 'none', 'inaccessible', 'both']) {
     test('reads the first three smartphone unread messages (frame: $frame)',
         () async {
       final result = await _evaluateSmartphoneReader(frame: frame);
@@ -355,7 +355,8 @@ void main() {
       expect(result['statusLive'], 'polite');
       expect(result['frameUrls'], [
         for (var index = 2; index <= 4; index += 1)
-          'https://gakujo.iess.niigata-u.ac.jp/campusweb/mobile/'
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+              '${frame == 'both' ? 'main' : 'mobile'}/'
               'campussquare.do?_flowExecutionKey=mobile%20key'
               '&_eventId=displayMidoku&keijitype=1&genrecd=40&seqNo=$index',
       ]);

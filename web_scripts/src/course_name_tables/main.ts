@@ -1,4 +1,4 @@
-export {};
+import { collectFrameDocuments } from '../shared/frame_documents.js';
 function courseNameTables(): string {
   function textOf(element: HTMLElement) {
     return ((element && (element.innerText || element.textContent)) || '')
@@ -18,23 +18,8 @@ function courseNameTables(): string {
     }
     return '';
   }
-  function collectDocuments() {
-    var documents: Document[] = [];
-    function collect(win: Window) {
-      try {
-        if (win.document) {
-          documents.push(win.document);
-        }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i]);
-        }
-      } catch (e) {}
-    }
-    collect(window);
-    return documents;
-  }
   const courseNameCandidates: string[] = [];
-  for (const doc of collectDocuments()) {
+  for (const doc of collectFrameDocuments()) {
     for (const table of Array.from(doc.querySelectorAll('table'))) {
       let courseColumn = -1;
       for (const row of Array.from(table.rows)) {

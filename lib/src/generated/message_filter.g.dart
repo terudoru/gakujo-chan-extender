@@ -180,6 +180,20 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
     return { url: url.href, count: largest };
   }
 
+  // web_scripts/src/shared/main_frame_document.ts
+  function mainFrameDocument() {
+    try {
+      var frame = document.getElementById("main-frame-if");
+      return frame && frame.contentWindow && frame.contentWindow.document || null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function mainFrameFirstDocuments() {
+    var frame = mainFrameDocument();
+    return frame && frame !== document ? [frame, document] : [document];
+  }
+
   // web_scripts/src/message_filter/main.ts
   function messageFilter() {
     var version = 9;
@@ -196,17 +210,6 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
     }
     window.__MBG_MESSAGE_FILTER_VERSION = version;
     window.__MBG_MESSAGE_FILTER_SIGNATURE = signature;
-    function candidateDocuments() {
-      var docs = [];
-      try {
-        var frame = document.getElementById("main-frame-if");
-        var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
-        if (frameDoc) docs.push(frameDoc);
-      } catch (e) {
-      }
-      if (docs.indexOf(document) < 0) docs.push(document);
-      return docs;
-    }
     function compactText(element) {
       return (element && (element.innerText || element.textContent || element.value) || "").replace(/\s+/g, " ").trim();
     }
@@ -427,7 +430,7 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
     }
     function applyFilter() {
       var applied = false;
-      var docs = candidateDocuments();
+      var docs = mainFrameFirstDocuments();
       var activeStatuses = [];
       docs.forEach(function(doc) {
         if (applyDocumentFilter(doc, activeStatuses)) applied = true;
@@ -441,7 +444,7 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
       if (window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE) window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE();
       delete window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE;
       window.clearInterval(window.__MBG_MESSAGE_FILTER_INTERVAL);
-      candidateDocuments().forEach(function(doc) {
+      mainFrameFirstDocuments().forEach(function(doc) {
         restoreRows(doc);
         removeStaleStatuses(doc, []);
       });

@@ -106,14 +106,17 @@ function makeDocument(hasList?: any) {
 
 const document: any = makeDocument(options.frame !== 'list');
 let frameDocument;
-if (options.frame === 'empty' || options.frame === 'list') {
-  frameDocument = makeDocument(options.frame === 'list');
+if (['empty', 'list', 'both'].includes(options.frame)) {
+  frameDocument = makeDocument(options.frame !== 'empty');
+  if (options.frame === 'both') {
+    frameDocument.baseURI = frameDocument.baseURI.replace('/mobile/', '/main/');
+  }
   document.frame = {contentWindow: {document: frameDocument}};
 } else if (options.frame === 'inaccessible') {
   document.frame = {get contentWindow() { throw new Error('Cross-origin frame'); }};
 }
 const docs = frameDocument ? [document, frameDocument] : [document];
-const listDoc = options.frame === 'list' ? frameDocument : document;
+const listDoc = ['list', 'both'].includes(options.frame) ? frameDocument : document;
 let pendingOldRequest;
 let holdOldRequest = !!options.previousInFlight;
 let oldRequestCount = 0;

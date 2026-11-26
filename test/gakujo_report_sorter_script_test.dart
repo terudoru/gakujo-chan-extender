@@ -203,30 +203,40 @@ void main() {
     );
   });
 
-  test('sorts the top report table when a readable iframe has none', () async {
-    await evaluatePageScriptLifecycle(
-      feature: 'report',
-      buildScript: '''
+  for (final mode in ['empty', 'inaccessible', 'match']) {
+    test('chooses the report table when the named frame is $mode', () async {
+      await evaluatePageScriptLifecycle(
+        feature: 'report',
+        buildScript: '''
 (function() {
   const table = document.querySelector('#enqListForm table:nth-of-type(2)');
-  let sortedRows = 0;
-  table.tBodies[0].appendChild = () => { sortedRows += 1; };
+  const mode = '$mode';
+  let rootSorts = 0;
+  let frameSorts = 0;
+  table.tBodies[0].appendChild = () => { rootSorts += 1; };
+  const frameTable = {...table, tBodies: [{appendChild() { frameSorts += 1; }}]};
+  const frame = mode === 'inaccessible'
+    ? {contentWindow: {get document() { throw new Error('Cross-origin frame'); }}}
+    : {contentWindow: {document: {querySelector: () => mode === 'match' ? frameTable : null}}};
   const getElementById = document.getElementById;
   document.getElementById = id => id === 'main-frame-if'
-    ? {contentWindow: {document: {querySelector: () => null}}}
+    ? frame
     : getElementById(id);
 
   ${GakujoReportSorterScript.build()}
 
-  if (sortedRows !== 1 || table.rows[1].cells[2].style.color !== 'blue') {
-    throw new Error('Expected the top report table to be sorted and styled');
+  const expected = mode === 'match' ? [0, 1] : [1, 0];
+  if (rootSorts !== expected[0] || frameSorts !== expected[1] ||
+      table.rows[1].cells[2].style.color !== 'blue') {
+    throw new Error('Incorrect report table selection for ' + mode);
   }
 })();
 ''',
-      teardownScript: '',
-      runOnce: true,
-    );
-  });
+        teardownScript: '',
+        runOnce: true,
+      );
+    });
+  }
 
   for (final foreign in [false, true]) {
     test('report controls follow frame navigation (foreign ID: $foreign)',

@@ -1,6 +1,6 @@
 import { watchPage } from '../shared/page_watch.js';
 import { largerMessageListPage } from '../shared/message_list_paging.js';
-export {};
+import { mainFrameFirstDocuments } from '../shared/main_frame_document.js';
 
 declare const __mbgConfig: { keywords: string[]; notificationKeywords?: string[] };
 
@@ -20,17 +20,6 @@ function messageFilter() {
   }
   window.__MBG_MESSAGE_FILTER_VERSION = version;
   window.__MBG_MESSAGE_FILTER_SIGNATURE = signature;
-
-  function candidateDocuments() {
-    var docs = [];
-    try {
-      var frame = document.getElementById('main-frame-if') as HTMLIFrameElement | null;
-      var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
-      if (frameDoc) docs.push(frameDoc);
-    } catch (e) {}
-    if (docs.indexOf(document) < 0) docs.push(document);
-    return docs;
-  }
 
   function compactText(element: HTMLElement & { value?: string }) {
     return (element && (element.innerText || element.textContent || element.value) || '')
@@ -267,7 +256,7 @@ function messageFilter() {
 
   function applyFilter() {
     var applied = false;
-    var docs = candidateDocuments();
+    var docs = mainFrameFirstDocuments();
     var activeStatuses: HTMLElement[] = [];
     docs.forEach(function(doc) {
       if (applyDocumentFilter(doc, activeStatuses)) applied = true;
@@ -283,7 +272,7 @@ function messageFilter() {
     if (window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE) window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE();
     delete window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE;
     window.clearInterval(window.__MBG_MESSAGE_FILTER_INTERVAL);
-    candidateDocuments().forEach(function(doc) {
+    mainFrameFirstDocuments().forEach(function(doc) {
       restoreRows(doc);
       removeStaleStatuses(doc, []);
     });

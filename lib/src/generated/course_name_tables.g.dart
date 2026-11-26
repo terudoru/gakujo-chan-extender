@@ -6,6 +6,24 @@ const String gakujoCourseNameTablesJs = r'''
 (function() {
 "use strict";
 (() => {
+  // web_scripts/src/shared/frame_documents.ts
+  function collectFrameDocuments() {
+    var documents = [];
+    function collect(win) {
+      try {
+        if (win.document) {
+          documents.push(win.document);
+        }
+        for (var i = 0; i < win.frames.length; i += 1) {
+          collect(win.frames[i]);
+        }
+      } catch (e) {
+      }
+    }
+    collect(window);
+    return documents;
+  }
+
   // web_scripts/src/course_name_tables/main.ts
   function courseNameTables() {
     var _a;
@@ -25,24 +43,8 @@ const String gakujoCourseNameTablesJs = r'''
       }
       return "";
     }
-    function collectDocuments() {
-      var documents = [];
-      function collect(win) {
-        try {
-          if (win.document) {
-            documents.push(win.document);
-          }
-          for (var i = 0; i < win.frames.length; i += 1) {
-            collect(win.frames[i]);
-          }
-        } catch (e) {
-        }
-      }
-      collect(window);
-      return documents;
-    }
     const courseNameCandidates = [];
-    for (const doc of collectDocuments()) {
+    for (const doc of collectFrameDocuments()) {
       for (const table of Array.from(doc.querySelectorAll("table"))) {
         let courseColumn = -1;
         for (const row of Array.from(table.rows)) {

@@ -1,4 +1,4 @@
-export {};
+import { collectFrameDocuments } from '../shared/frame_documents.js';
 function downloadCapture() {
   var captureVersion = 22;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
@@ -271,22 +271,6 @@ function downloadCapture() {
     return fileNameFromForm(form);
   }
 
-  function collectDocuments() {
-    var documents: Document[] = [];
-    function collect(win: Window) {
-      try {
-        if (win.document) {
-          documents.push(win.document);
-        }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i]);
-        }
-      } catch (e) {}
-    }
-    collect(window);
-    return documents;
-  }
-
   function courseFromNames(names: Set<string>): MbgCourseEstimate | null {
     if (!names.size) return null;
     const courseNameAmbiguous = names.size > 1;
@@ -296,7 +280,7 @@ function downloadCapture() {
     };
   }
 
-  function firstUsefulText(selectors: string[], documents = collectDocuments()) {
+  function firstUsefulText(selectors: string[], documents = collectFrameDocuments()) {
     for (var i = 0; i < selectors.length; i += 1) {
       var names = new Set<string>();
       for (var d = 0; d < documents.length; d += 1) {
@@ -314,7 +298,7 @@ function downloadCapture() {
   }
 
   function estimateCourseName(source?: HTMLElement | null): MbgCourseEstimate {
-    var documents = source && source.ownerDocument ? [source.ownerDocument] : collectDocuments();
+    var documents = source && source.ownerDocument ? [source.ownerDocument] : collectFrameDocuments();
     var row = source && source.closest ? source.closest('tr') : null;
     var tableCourse = row ? firstCourseNameFromTables(documents, row) : null;
     if (!tableCourse) tableCourse = firstCourseNameFromTables(documents);
@@ -403,7 +387,7 @@ function downloadCapture() {
     return courseFromNames(names);
   }
 
-  function firstMatchingCourseNameText(selectors: string[], documents = collectDocuments()) {
+  function firstMatchingCourseNameText(selectors: string[], documents = collectFrameDocuments()) {
     for (var i = 0; i < selectors.length; i += 1) {
       var names = new Set<string>();
       for (var d = 0; d < documents.length; d += 1) {
@@ -810,7 +794,7 @@ function downloadCapture() {
 
   function attachClickHandlers() {
     detachHandlers();
-    var documents = collectDocuments();
+    var documents = collectFrameDocuments();
     for (var i = 0; i < documents.length; i += 1) {
       try {
         documents[i].addEventListener(

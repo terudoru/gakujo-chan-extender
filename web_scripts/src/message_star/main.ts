@@ -1,5 +1,6 @@
 import { watchPage } from '../shared/page_watch.js';
 import { messageOnclickUrl, readSmartphoneMessageRow } from '../shared/smartphone_message_rows.js';
+import { mainFrameFirstDocuments } from '../shared/main_frame_document.js';
 
 type StarData = { keijitype: string; genrecd: string; seqNo: string; title?: string; genre?: string; sender?: string; period?: string; postedAt?: string; body?: string; [key: string]: string | undefined };
 type StarNode = { innerText?: string; textContent?: string | null } | null;
@@ -28,16 +29,6 @@ function messageStar() {
   var listDocuments: Document[] = [];
   var openedMessageKey = '__MBG_MESSAGE_STARS_OPEN_MESSAGE';
 
-  function candidateDocuments() {
-    var docs = [];
-    try {
-      var frame = document.getElementById('main-frame-if') as HTMLIFrameElement | null;
-      var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
-      if (frameDoc) docs.push(frameDoc);
-    } catch (e) {}
-    if (docs.indexOf(document) < 0) docs.push(document);
-    return docs;
-  }
   function text(node: StarNode) {
     return String(node && (node.innerText || node.textContent) || '')
       .replace(/\s+/g, ' ').trim();
@@ -290,7 +281,7 @@ function messageStar() {
   }
   function update() {
     if (disposed) return;
-    var docs = candidateDocuments();
+    var docs = mainFrameFirstDocuments();
     listDocuments.forEach(function(doc) {
       if (docs.indexOf(doc) < 0) doc.removeEventListener('click', rememberClickedMessage, true);
     });

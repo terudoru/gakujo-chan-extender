@@ -505,6 +505,28 @@ function controlNavigation(foreignId: string) {
     foreignPreserved: top.context.document.getElementById(foreignId) === foreign};
 }
 
+function reportsWithNamedFrame(numbered: boolean) {
+  const top = createPage();
+  const named = createPage();
+  const other = createPage();
+  named.setGp('3');
+  other.setGp('2');
+  const frame = top.context.document.createElement('iframe');
+  frame.id = 'main-frame-if';
+  frame.contentWindow = named.context.window;
+  top.context.document.body.appendChild(frame);
+  const denied = {get document() { throw new Error('Cross-origin document'); }};
+  top.context.window.frames.push(denied);
+  if (numbered) top.context.window.frames.push(named.context.window);
+  top.context.window.frames.push(other.context.window);
+  const reports: number[] = [];
+  top.context.window.GakujoGpaReport = {
+    postMessage(message: string) { reports.push(JSON.parse(message).gpa); }
+  };
+  run(buildScript, top);
+  return reports;
+}
+
 process.stdout.write(JSON.stringify({
   afterBuild,
   afterTeardown,
@@ -523,6 +545,7 @@ process.stdout.write(JSON.stringify({
   gpaReport,
   gpaAfterHeaderMutation: mutatedPage.gpaText(),
   gpaInNewFrame: newFrame.gpaText(),
+  namedFrameReports: [reportsWithNamedFrame(true), reportsWithNamedFrame(false)],
   frameNavigation,
   detachedFrame,
   controlNavigation: controlNavigation('portal-action'),

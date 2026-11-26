@@ -23,9 +23,9 @@ assert.deepEqual(repeated.formFieldPairs,
   [['fileId', 'A'], ['_eventId', 'download'], ['fileId', 'B'], ['fileId', 'C']]);
 assert.equal(repeated.formFields.fileId, 'C');
 assert.deepEqual(behavior('courseRowAndFrame').captured.map(value => value.courseName),
-  ['Chemistry', 'Chemistry', '未分類', 'Chemistry', 'Chemistry', '未分類']);
+  ['Chemistry', 'Chemistry', '未分類', 'Chemistry', 'Chemistry', '未分類', 'Physics']);
 assert.deepEqual(behavior('courseRowAndFrame').captured.map(value => !!value.courseNameAmbiguous),
-  [false, false, true, false, false, true]);
+  [false, false, true, false, false, true, false]);
 assert.deepEqual(behavior('courseNameTables').captured.map(value => value.courseName),
   ['線形代数', '物理学基礎BⅠ', '情報基礎']);
 assert.deepEqual(behavior('nonSubmitButtons').postCounts, [0, 1, 2, 3]);

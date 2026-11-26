@@ -151,6 +151,19 @@ void main() {
     expect(afterFrameRemoval['removedObserversDisconnected'], isTrue);
   });
 
+  test('GPA appends the named frame after numbered frames even on overlap',
+      () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: '',
+    );
+
+    expect(result['namedFrameReports'], [
+      [4, 3, 2, 3],
+      [4, 2, 3],
+    ]);
+  });
+
   for (final foreign in [false, true]) {
     test('grade sort controls follow frame navigation (foreign ID: $foreign)',
         () async {

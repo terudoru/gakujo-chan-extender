@@ -1,5 +1,5 @@
 import { watchPage } from '../shared/page_watch.js';
-export {};
+import { mainFrameDocument } from '../shared/main_frame_document.js';
 declare const __mbgConfig: { initialSort?: string };
 function reportSorter() {
   var version = 6;
@@ -16,17 +16,8 @@ function reportSorter() {
   window.__MBG_REPORT_SORTER_VERSION = version;
   var sortedTables = new WeakSet();
 
-  function mainFrameDocument() {
-    try {
-      var frame = document.getElementById('main-frame-if') as HTMLIFrameElement | null;
-      return frame && frame.contentWindow && frame.contentWindow.document || document;
-    } catch (e) {
-      return document;
-    }
-  }
-
   function reportTable() {
-    var doc = mainFrameDocument();
+    var doc = mainFrameDocument() || document;
     return doc.querySelector<HTMLTableElement>('#enqListForm table:nth-of-type(2)') ||
       document.querySelector<HTMLTableElement>('#enqListForm table:nth-of-type(2)');
   }

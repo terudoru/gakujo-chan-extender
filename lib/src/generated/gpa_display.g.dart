@@ -133,6 +133,24 @@ const String gakujoGpaDisplayJs = r'''
     };
   }
 
+  // web_scripts/src/shared/frame_documents.ts
+  function collectFrameDocuments() {
+    var documents = [];
+    function collect(win) {
+      try {
+        if (win.document) {
+          documents.push(win.document);
+        }
+        for (var i = 0; i < win.frames.length; i += 1) {
+          collect(win.frames[i]);
+        }
+      } catch (e) {
+      }
+    }
+    collect(window);
+    return documents;
+  }
+
   // web_scripts/src/gpa_display/main.ts
   function gpaDisplay() {
     var version = 12;
@@ -189,19 +207,7 @@ const String gakujoGpaDisplayJs = r'''
       return Number(match[0]);
     }
     function collectDocuments() {
-      var documents = [];
-      function collect(win) {
-        try {
-          if (win.document) {
-            documents.push(win.document);
-          }
-          for (var i = 0; i < win.frames.length; i += 1) {
-            collect(win.frames[i]);
-          }
-        } catch (e) {
-        }
-      }
-      collect(window);
+      var documents = collectFrameDocuments();
       try {
         var mainFrame = window.document.getElementById("main-frame-if");
         if (mainFrame && mainFrame.contentWindow && mainFrame.contentWindow.document) {
