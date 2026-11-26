@@ -1,3 +1,4 @@
+import { readBoundedOfficeStream, validateOfficeDirectory } from '../shared/office_zip.js';
 import { watchPage } from '../shared/page_watch.js';
 import { mbgValidateImage } from '../shared/image_bounds.js';
 import { loadPdfReadingProgress } from './document_actions.js';
@@ -870,50 +871,15 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (officeWaiters.length === 1) channel.postMessage('preview-office');
     });
   }
-  function mbgCheckOfficeDirectory(buffer: ArrayBuffer) {
-    var bytes = new Uint8Array(buffer), view = new DataView(buffer), end = -1;
-    for (var i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
-      if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
-    }
-    if (end < 0 || end + 22 + view.getUint16(end + 20, true) !== bytes.length) throw new Error('文書の構造を確認できません');
-    var count = view.getUint16(end + 10, true), size = view.getUint32(end + 12, true), offset = view.getUint32(end + 16, true);
-    if (view.getUint16(end + 4, true) !== 0 || view.getUint16(end + 6, true) !== 0 ||
-        view.getUint16(end + 8, true) !== count || count === 0xffff || size === 0xffffffff ||
-        offset === 0xffffffff || count > 5000 || offset + size > end) throw new Error('文書の構造が大きすぎるか、対応していない形式です');
-    var cursor = offset, limit = offset + size;
-    for (var n = 0; n < count; n++) {
-      if (cursor + 46 > limit || view.getUint32(cursor, true) !== 0x02014b50 ||
-          view.getUint32(cursor + 20, true) === 0xffffffff || view.getUint32(cursor + 24, true) === 0xffffffff ||
-          view.getUint32(cursor + 42, true) === 0xffffffff) throw new Error('文書の構造が正しくないか、対応していない形式です');
-      cursor += 46 + view.getUint16(cursor + 28, true) + view.getUint16(cursor + 30, true) + view.getUint16(cursor + 32, true);
-      if (cursor > limit) throw new Error('文書の構造が正しくありません');
-    }
-    if (cursor !== limit) throw new Error('文書の構造が正しくありません');
-  }
   function mbgOfficeEntry(entry: MbgZipEntry, stopped: () => boolean) {
-    return new Promise<Uint8Array<ArrayBuffer>>(function(resolve, reject) {
-      var stream = entry.internalStream('uint8array'), parts: Uint8Array<ArrayBuffer>[] = [], length = 0, failed = false;
-      stream.on('data', function(chunk) {
-        if (failed) return;
-        length += chunk.length;
-        if (stopped() || length > 4 * 1024 * 1024) {
-          failed = true; stream.pause(); reject(new Error('文書内のデータが大きすぎるか中止されました')); return;
-        }
-        parts.push(chunk);
-      });
-      stream.on('error', function(error) { if (!failed) reject(error); });
-      stream.on('end', function() {
-        if (failed) return;
-        if (stopped()) { reject(new Error('プレビューを中止しました')); return; }
-        var bytes = new Uint8Array(length), offset = 0;
-        parts.forEach(function(part) { bytes.set(part, offset); offset += part.length; });
-        resolve(bytes);
-      });
-      stream.resume();
-    });
+    return readBoundedOfficeStream(
+      entry.internalStream('uint8array'), stopped, 4 * 1024 * 1024,
+      'プレビューを中止しました', '文書内のデータが大きすぎるか中止されました',
+      '文書内のデータが大きすぎるか中止されました',
+    );
   }
   function mbgOfficeText(buffer: ArrayBuffer, extension: string, stopped: () => boolean) {
-    mbgCheckOfficeDirectory(buffer);
+    validateOfficeDirectory(buffer);
     return window.JSZip!.loadAsync(buffer).then(function(zip) {
       var entries = Object.keys(zip.files);
       if (entries.length > 5000) throw new Error('文書内のファイルが多すぎます');

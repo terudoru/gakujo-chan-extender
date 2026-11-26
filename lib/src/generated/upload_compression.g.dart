@@ -12,6 +12,71 @@ String gakujoUploadCompressionJs(Map<String, Object?> config) =>
 const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
+  // web_scripts/src/shared/office_zip.ts
+  function validateOfficeDirectory(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var end = -1;
+    var min = Math.max(0, bytes.length - 65557);
+    for (var p = bytes.length - 22; p >= min; p--) {
+      if (view.getUint32(p, true) === 101010256) {
+        end = p;
+        break;
+      }
+    }
+    if (end < 0 || end + 22 + view.getUint16(end + 20, true) !== bytes.length) {
+      throw new Error("文書の構造を確認できません");
+    }
+    var count = view.getUint16(end + 10, true);
+    var size = view.getUint32(end + 12, true);
+    var offset = view.getUint32(end + 16, true);
+    if (view.getUint16(end + 4, true) !== 0 || view.getUint16(end + 6, true) !== 0 || view.getUint16(end + 8, true) !== count || count === 65535 || size === 4294967295 || offset === 4294967295 || count > 5e3 || offset + size > end) {
+      throw new Error("文書の構造が大きすぎるか、対応していない形式です");
+    }
+    var cursor = offset, limit = offset + size;
+    for (var i = 0; i < count; i++) {
+      if (cursor + 46 > limit || view.getUint32(cursor, true) !== 33639248 || view.getUint32(cursor + 20, true) === 4294967295 || view.getUint32(cursor + 24, true) === 4294967295 || view.getUint32(cursor + 42, true) === 4294967295) {
+        throw new Error("文書の構造が正しくないか、対応していない形式です");
+      }
+      cursor += 46 + view.getUint16(cursor + 28, true) + view.getUint16(cursor + 30, true) + view.getUint16(cursor + 32, true);
+      if (cursor > limit) throw new Error("文書の構造が正しくありません");
+    }
+    if (cursor !== limit) throw new Error("文書の構造が正しくありません");
+  }
+  function readBoundedOfficeStream(stream, cancelled, limit, cancelledMessage, oversizedMessage, earlyCancelMessage = cancelledMessage) {
+    return new Promise(function(resolve, reject) {
+      var parts = [], length = 0, failed = false;
+      stream.on("data", function(chunk) {
+        if (failed) return;
+        length += chunk.length;
+        if (cancelled() || length > limit) {
+          failed = true;
+          stream.pause();
+          reject(new Error(cancelled() ? earlyCancelMessage : oversizedMessage));
+          return;
+        }
+        parts.push(chunk);
+      });
+      stream.on("error", function(error) {
+        if (!failed) reject(error);
+      });
+      stream.on("end", function() {
+        if (failed) return;
+        if (cancelled()) {
+          reject(new Error(cancelledMessage));
+          return;
+        }
+        var bytes = new Uint8Array(length), offset = 0;
+        parts.forEach(function(part) {
+          bytes.set(part, offset);
+          offset += part.length;
+        });
+        resolve(bytes);
+      });
+      stream.resume();
+    });
+  }
+
   // web_scripts/src/shared/page_watch.ts
   function collectPageDocuments(win) {
     var docs = [];
@@ -609,36 +674,6 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
         if (input.__mbgOfficeCompressionCancel === cancelOffice) delete input.__mbgOfficeCompressionCancel;
       });
     }
-    function validateOfficeDirectory(buffer) {
-      var bytes = new Uint8Array(buffer);
-      var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      var end = -1;
-      var min = Math.max(0, bytes.length - 65557);
-      for (var p = bytes.length - 4; p >= min; p--) {
-        if (view.getUint32(p, true) === 101010256) {
-          end = p;
-          break;
-        }
-      }
-      if (end < 0 || end + 22 > bytes.length || end + 22 + view.getUint16(end + 20, true) !== bytes.length) {
-        throw new Error("文書の構造を確認できません");
-      }
-      var count = view.getUint16(end + 10, true);
-      var size = view.getUint32(end + 12, true);
-      var offset = view.getUint32(end + 16, true);
-      if (view.getUint16(end + 4, true) !== 0 || view.getUint16(end + 6, true) !== 0 || view.getUint16(end + 8, true) !== count || count === 65535 || size === 4294967295 || offset === 4294967295 || count > 5e3 || offset + size > end) {
-        throw new Error("文書の構造が大きすぎるか、対応していない形式です");
-      }
-      var cursor = offset, limit = offset + size;
-      for (var i = 0; i < count; i++) {
-        if (cursor + 46 > limit || view.getUint32(cursor, true) !== 33639248 || view.getUint32(cursor + 20, true) === 4294967295 || view.getUint32(cursor + 24, true) === 4294967295 || view.getUint32(cursor + 42, true) === 4294967295) {
-          throw new Error("文書の構造が正しくないか、対応していない形式です");
-        }
-        cursor += 46 + view.getUint16(cursor + 28, true) + view.getUint16(cursor + 30, true) + view.getUint16(cursor + 32, true);
-        if (cursor > limit) throw new Error("文書の構造が正しくありません");
-      }
-      if (cursor !== limit) throw new Error("文書の構造が正しくありません");
-    }
     function rebuildOffice(buffer, mediaPattern, settings, mimeType, cancelled) {
       validateOfficeDirectory(buffer);
       return window.JSZip.loadAsync(buffer).then(function(zip) {
@@ -688,7 +723,7 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
         function nextImage() {
           if (cancelled()) throw new Error("圧縮を中止しました");
           if (index >= names.length) {
-            return readBoundedOfficeStream(zip.generateInternalStream({
+            return readCompressionOfficeStream(zip.generateInternalStream({
               type: "uint8array",
               compression: "DEFLATE",
               compressionOptions: { level: 9 },
@@ -735,40 +770,10 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
       });
     }
     function readBoundedOfficeEntry(entry, cancelled) {
-      return readBoundedOfficeStream(entry.internalStream("uint8array"), cancelled, maxOfficeEntryBytes);
+      return readCompressionOfficeStream(entry.internalStream("uint8array"), cancelled, maxOfficeEntryBytes);
     }
-    function readBoundedOfficeStream(stream, cancelled, limit) {
-      return new Promise(function(resolve, reject) {
-        var parts = [], length = 0, failed = false;
-        stream.on("data", function(chunk) {
-          if (failed) return;
-          length += chunk.length;
-          if (cancelled() || length > limit) {
-            failed = true;
-            stream.pause();
-            reject(new Error(cancelled() ? "圧縮を中止しました" : "文書内のファイルが大きすぎます"));
-            return;
-          }
-          parts.push(chunk);
-        });
-        stream.on("error", function(error) {
-          if (!failed) reject(error);
-        });
-        stream.on("end", function() {
-          if (failed) return;
-          if (cancelled()) {
-            reject(new Error("圧縮を中止しました"));
-            return;
-          }
-          var bytes = new Uint8Array(length), offset = 0;
-          parts.forEach(function(part) {
-            bytes.set(part, offset);
-            offset += part.length;
-          });
-          resolve(bytes);
-        });
-        stream.resume();
-      });
+    function readCompressionOfficeStream(stream, cancelled, limit) {
+      return readBoundedOfficeStream(stream, cancelled, limit, "圧縮を中止しました", "文書内のファイルが大きすぎます");
     }
     function statusFor(input) {
       var doc = input.ownerDocument;
