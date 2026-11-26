@@ -525,43 +525,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                               ].join('\n'),
                             ),
                             isThreeLine: entry.location != null,
-                            trailing: entry.location == null
-                                ? null
-                                : Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        tooltip: '保存場所をコピー',
-                                        icon: const Icon(Icons.copy),
-                                        onPressed: () async {
-                                          final write = Clipboard.setData(
-                                            ClipboardData(
-                                              text: gakujoDownloadLocationLabel(
-                                                  entry.location!),
-                                            ),
-                                          );
-                                          Navigator.of(dialogContext).pop();
-                                          try {
-                                            await write;
-                                          } on Object {
-                                            _showSnackBar('保存場所をコピーできませんでした');
-                                            return;
-                                          }
-                                          _showSnackBar('保存場所をコピーしました');
-                                        },
-                                      ),
-                                      IconButton(
-                                        tooltip: '開く',
-                                        icon: const Icon(Icons.open_in_new),
-                                        onPressed: () {
-                                          Navigator.of(dialogContext).pop();
-                                          unawaited(
-                                            _openSavedDownload(entry.location!),
-                                          );
-                                        },
-                                      ),
-                                    ],
-                                  ),
+                            trailing: _savedDownloadActions(
+                              dialogContext,
+                              entry.location,
+                            ),
                           );
                         },
                       ),
@@ -744,44 +711,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                                     gakujoDownloadLocationLabel(file.location!),
                                 ].join('\n'),
                               ),
-                              trailing: file.location == null
-                                  ? null
-                                  : Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          tooltip: '保存場所をコピー',
-                                          icon: const Icon(Icons.copy),
-                                          onPressed: () async {
-                                            final write = Clipboard.setData(
-                                              ClipboardData(
-                                                text: gakujoDownloadLocationLabel(
-                                                    file.location!),
-                                              ),
-                                            );
-                                            Navigator.of(dialogContext).pop();
-                                            try {
-                                              await write;
-                                            } on Object {
-                                              _showSnackBar('保存場所をコピーできませんでした');
-                                              return;
-                                            }
-                                            _showSnackBar('保存場所をコピーしました');
-                                          },
-                                        ),
-                                        IconButton(
-                                          tooltip: '開く',
-                                          icon: const Icon(Icons.open_in_new),
-                                          onPressed: () {
-                                            Navigator.of(dialogContext).pop();
-                                            unawaited(
-                                              _openSavedDownload(
-                                                  file.location!),
-                                            );
-                                          },
-                                        ),
-                                      ],
-                                    ),
+                              trailing: _savedDownloadActions(
+                                dialogContext,
+                                file.location,
+                              ),
                             ),
                         ],
                       );
@@ -1463,6 +1396,40 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       // Keep the URL.
     }
     _showSnackBar('ダウンロードに失敗しました: $name');
+  }
+
+  Widget? _savedDownloadActions(BuildContext dialogContext, String? location) {
+    if (location == null) return null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: '保存場所をコピー',
+          icon: const Icon(Icons.copy),
+          onPressed: () async {
+            final write = Clipboard.setData(
+              ClipboardData(text: gakujoDownloadLocationLabel(location)),
+            );
+            Navigator.of(dialogContext).pop();
+            try {
+              await write;
+            } on Object {
+              _showSnackBar('保存場所をコピーできませんでした');
+              return;
+            }
+            _showSnackBar('保存場所をコピーしました');
+          },
+        ),
+        IconButton(
+          tooltip: '開く',
+          icon: const Icon(Icons.open_in_new),
+          onPressed: () {
+            Navigator.of(dialogContext).pop();
+            unawaited(_openSavedDownload(location));
+          },
+        ),
+      ],
+    );
   }
 
   Future<void> _openSavedDownload(String location) async {

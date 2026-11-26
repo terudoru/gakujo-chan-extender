@@ -98,32 +98,10 @@ class GakujoCourseNameEstimator {
   }
 
   static bool _isIgnoredCourseName(String text) {
-    if (_isFileRow(text)) {
-      return true;
-    }
-    final genericPageLabels = {
-      'ダウンロード',
-      '開設一覧',
-      '連絡通知',
-      '掲示一覧',
-      '授業ポートフォリオ',
-      'レポート・小テスト・アンケート提出',
-      'レポート提出',
-      '小テスト',
-      'アンケート',
-      '年度 開講所属 開講番号 科目名',
-      'タイトル',
-    };
-    if (genericPageLabels.contains(text)) {
-      return true;
-    }
-
-    final lower = text.toLowerCase();
-    if (lower.startsWith('now loading')) {
-      return true;
-    }
-    final ignored = ['学務情報システム', 'more better gakujo', 'campussquare'];
-    return ignored.any(lower.contains);
+    return _isFileRow(text) ||
+        text == 'ダウンロード' ||
+        text.toLowerCase().startsWith('now loading') ||
+        DownloadFileNamePolicy.isGenericCourseName(text);
   }
 }
 

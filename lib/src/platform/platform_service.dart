@@ -27,20 +27,17 @@ abstract class GakujoPlatformService {
     return const UnsupportedGakujoPlatformService();
   }
 
-  GakujoWebViewService createWebViewService();
+  GakujoWebViewService createWebViewService() =>
+      const WebViewFlutterGakujoWebViewService();
 
   GakujoDownloadService createDownloadService();
 
-  GakujoCalendarService createCalendarService();
+  GakujoCalendarService createCalendarService() =>
+      const UnsupportedGakujoCalendarService();
 }
 
 class AndroidGakujoPlatformService extends GakujoPlatformService {
   const AndroidGakujoPlatformService();
-
-  @override
-  GakujoWebViewService createWebViewService() {
-    return const WebViewFlutterGakujoWebViewService();
-  }
 
   @override
   GakujoDownloadService createDownloadService() {
@@ -57,11 +54,6 @@ class IosGakujoPlatformService extends GakujoPlatformService {
   const IosGakujoPlatformService();
 
   @override
-  GakujoWebViewService createWebViewService() {
-    return const WebViewFlutterGakujoWebViewService();
-  }
-
-  @override
   GakujoDownloadService createDownloadService() {
     return FileSystemGakujoDownloadService();
   }
@@ -74,11 +66,6 @@ class IosGakujoPlatformService extends GakujoPlatformService {
 
 class MacosGakujoPlatformService extends GakujoPlatformService {
   const MacosGakujoPlatformService();
-
-  @override
-  GakujoWebViewService createWebViewService() {
-    return const WebViewFlutterGakujoWebViewService();
-  }
 
   @override
   GakujoDownloadService createDownloadService() {
@@ -95,18 +82,8 @@ class LinuxGakujoPlatformService extends GakujoPlatformService {
   const LinuxGakujoPlatformService();
 
   @override
-  GakujoWebViewService createWebViewService() {
-    return const WebViewFlutterGakujoWebViewService();
-  }
-
-  @override
   GakujoDownloadService createDownloadService() {
     return FileSystemGakujoDownloadService();
-  }
-
-  @override
-  GakujoCalendarService createCalendarService() {
-    return const UnsupportedGakujoCalendarService();
   }
 }
 
@@ -122,28 +99,13 @@ class DesktopGakujoPlatformService extends GakujoPlatformService {
   GakujoDownloadService createDownloadService() {
     return FileSystemGakujoDownloadService();
   }
-
-  @override
-  GakujoCalendarService createCalendarService() {
-    return const UnsupportedGakujoCalendarService();
-  }
 }
 
 class UnsupportedGakujoPlatformService extends GakujoPlatformService {
   const UnsupportedGakujoPlatformService();
 
   @override
-  GakujoWebViewService createWebViewService() {
-    return const WebViewFlutterGakujoWebViewService();
-  }
-
-  @override
   GakujoDownloadService createDownloadService() {
     return const UnsupportedGakujoDownloadService('Unsupported platform.');
-  }
-
-  @override
-  GakujoCalendarService createCalendarService() {
-    return const UnsupportedGakujoCalendarService();
   }
 }

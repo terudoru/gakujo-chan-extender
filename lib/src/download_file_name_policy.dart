@@ -341,6 +341,11 @@ class DownloadFileNamePolicy {
         name == unknownCourseFolderName) {
       return false;
     }
+    return !isGenericCourseName(name);
+  }
+
+  /// Matches shared page labels and portal branding after normalization.
+  static bool isGenericCourseName(String name) {
     const genericPageLabels = {
       '開設一覧',
       '連絡通知',
@@ -353,14 +358,11 @@ class DownloadFileNamePolicy {
       '年度 開講所属 開講番号 科目名',
       'タイトル',
     };
-    if (genericPageLabels.contains(name)) {
-      return false;
-    }
-
     final lower = name.toLowerCase();
-    return !lower.contains('campussquare') &&
-        !lower.contains('more better gakujo') &&
-        !name.contains('学務情報システム');
+    return genericPageLabels.contains(name) ||
+        lower.contains('campussquare') ||
+        lower.contains('more better gakujo') ||
+        name.contains('学務情報システム');
   }
 
   static String? _inferCourseNameFromFileName(

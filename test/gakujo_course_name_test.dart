@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/download_file_name_policy.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_course_name_estimator.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/generated/course_name_body_text.g.dart';
@@ -8,6 +9,22 @@ import 'package:morebettergakujo_flutter/src/generated/course_name_estimate.g.da
 import 'package:morebettergakujo_flutter/src/generated/course_name_tables.g.dart';
 
 void main() {
+  test('download label is usable as a folder but not as an inferred course', () {
+    const label = 'ダウンロード';
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: label,
+        fileName: 'handout.pdf',
+      ),
+      label,
+    );
+    expect(
+      GakujoCourseNameEstimator.estimateFromCandidates([label, '線形代数']),
+      '線形代数',
+    );
+    expect(isUsefulGakujoCourseName(label), isFalse);
+  });
+
   test('only the exact download page label is ignored', () {
     expect(isUsefulGakujoCourseName('ダウンロード'), isFalse);
     expect(isUsefulGakujoCourseName('ダウンロード入門'), isTrue);

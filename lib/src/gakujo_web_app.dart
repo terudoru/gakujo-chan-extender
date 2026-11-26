@@ -10612,37 +10612,16 @@ bool isUsefulGakujoCourseName(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty ||
       normalized.length > DownloadFileNamePolicy.maxCourseFolderNameLength ||
-      normalized == '未分類') {
+      normalized == DownloadFileNamePolicy.unknownCourseFolderName ||
+      normalized == 'ダウンロード' ||
+      DownloadFileNamePolicy.isGenericCourseName(normalized)) {
     return false;
   }
 
-  const genericPageLabels = {
-    'ダウンロード',
-    '開設一覧',
-    '連絡通知',
-    '掲示一覧',
-    '授業ポートフォリオ',
-    'レポート・小テスト・アンケート提出',
-    'レポート提出',
-    '小テスト',
-    'アンケート',
-    '年度 開講所属 開講番号 科目名',
-    'タイトル',
-  };
-  if (genericPageLabels.contains(normalized)) {
-    return false;
-  }
-
-  final lower = normalized.toLowerCase();
-  if (RegExp(
+  return !RegExp(
     r'有効期限|タイムアウト|インターネットに接続|接続できません|'
     r'ページを表示できません|webpage not available|ログイン|ログアウト|'
     r'^now loading|'
     r'^(?:エラー|error)',
-  ).hasMatch(lower)) {
-    return false;
-  }
-  return !lower.contains('campussquare') &&
-      !lower.contains('more better gakujo') &&
-      !normalized.contains('学務情報システム');
+  ).hasMatch(normalized.toLowerCase());
 }

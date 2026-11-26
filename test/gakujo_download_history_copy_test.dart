@@ -222,18 +222,24 @@ void main() {
             await openSettings();
           }
 
-          Future<void> copy(String name) async {
+          Future<ModalRoute<dynamic>> openHistory() async {
             await tap(button);
             final option = find.widgetWithText(ListTile, shortcut);
             final chooser = ModalRoute.of(tester.element(option))!;
-            final previousPops = List.of(pops.routes);
-            final previousWrites = List.of(writes);
             await tap(option);
             if (shortcut == '授業ごとの資料') await tap(find.text(_course));
-            Finder row(String name) => find.ancestor(
-              of: find.text(name),
-              matching: find.byType(ListTile),
-            );
+            return chooser;
+          }
+
+          Finder row(String name) => find.ancestor(
+            of: find.text(name),
+            matching: find.byType(ListTile),
+          );
+
+          Future<void> copy(String name) async {
+            final previousPops = List.of(pops.routes);
+            final previousWrites = List.of(writes);
+            final chooser = await openHistory();
             Finder icon(String name) => find.descendant(
               of: row(name),
               matching: find.byTooltip('保存場所をコピー'),
@@ -277,6 +283,23 @@ void main() {
             expect(clipboard, file.value.label);
             expect(success, findsOneWidget);
           }
+
+          final previousPops = List.of(pops.routes);
+          final chooser = await openHistory();
+          Finder openIcon(String name) => find.descendant(
+            of: row(name),
+            matching: find.byTooltip('開く'),
+          );
+          expect(openIcon('missing.pdf'), findsNothing);
+          final dialog = ModalRoute.of(tester.element(openIcon(file)))!;
+          await tap(openIcon(file));
+          expect(pops.routes, [...previousPops, same(chooser), same(dialog)]);
+          expect(settings.isCurrent, isTrue);
+          expect(
+            find.text('ファイルを開けませんでした').hitTestable(),
+            findsOneWidget,
+          );
+
           for (final message in [_openError, _setError]) {
             clipboard = _previous;
             rejection = message;
