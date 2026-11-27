@@ -78,6 +78,7 @@ class SecureStorageFactory {
     'more_better_gakujo_report_initial_sort',
     'more_better_gakujo_desktop_zoom_settings',
     'more_better_gakujo_pending_draft_clear',
+    'more_better_gakujo_planner_login_scope',
     'more_better_gakujo_setup_completed',
     'more_better_gakujo_star_sync_config',
     'more_better_gakujo_star_sync_google_token',

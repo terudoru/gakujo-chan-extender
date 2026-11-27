@@ -10,6 +10,8 @@ import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_message_star_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/generated/history_marker.g.dart';
+import 'package:morebettergakujo_flutter/src/planner_bridge/planner_broker.dart';
+import 'package:morebettergakujo_flutter/src/secure_storage_factory.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart'
     as windows;
@@ -41,6 +43,10 @@ void main() {
     const accountA = 'notification-history-test-a';
     const accountB = 'notification-history-test-b';
     final hash = starSyncAccountHash(accountA)!;
+    final storage = SecureStorageFactory.create();
+    Future<Object?> readPlannerIdentity() async => jsonDecode(
+      await storage.read(key: 'more_better_gakujo_planner_login_scope') ?? 'null',
+    );
     final loads = <String>[];
     final readHistory = gakujoHistoryMarkerJs({'action': 'read'});
     var historyReads = 0;
@@ -59,6 +65,10 @@ void main() {
       'more_better_gakujo_setup_completed': 'true',
       'more_better_gakujo_disabled_feature_flags': 'update_notice',
       'more_better_gakujo_active_login_account': hash,
+      'more_better_gakujo_planner_login_scope': jsonEncode({
+        'account': starSyncAccountHash(accountB),
+        'student': plannerStudentScope(accountB),
+      }),
       'more_better_gakujo_notification_history': jsonEncode([
         {
           'account': hash,
@@ -163,17 +173,23 @@ void main() {
       loginVisible = false;
     }
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: GakujoWebApp(
-          localPrefsStore: _TestPrefs(),
-          gakujoReachable: () async => true,
+    Future<void> mount() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GakujoWebApp(
+            localPrefsStore: _TestPrefs(),
+            gakujoReachable: () async => true,
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await mount();
     try {
       await openPage(portal);
+      // A scope left by another account cannot attach to the legacy session.
+      expect(await readPlannerIdentity(), isNull);
       for (final (authPage, loginId, shouldRestore) in [
         ('login.do', accountA, true),
         ('campussquare.do?_eventId=logout', accountA, false),
@@ -191,13 +207,26 @@ void main() {
           expect(loads, [report]);
         }
         await submit(loginId);
+        expect(await readPlannerIdentity(), isNull);
         await openPage(portal, expectRestore: shouldRestore);
         expect(loads, shouldRestore ? [report, report] : [report]);
+        expect(await readPlannerIdentity(), {
+          'account': starSyncAccountHash(loginId),
+          'student': plannerStudentScope(loginId),
+        });
         if (shouldRestore) {
           await openPage(report);
           await openPage(portal);
         }
       }
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      await mount();
+      await openPage(portal);
+      expect(await readPlannerIdentity(), {
+        'account': starSyncAccountHash(accountB),
+        'student': plannerStudentScope(accountB),
+      });
     } finally {
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(minutes: 5));

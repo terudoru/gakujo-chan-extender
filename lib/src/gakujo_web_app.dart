@@ -2388,13 +2388,30 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _secureStorageAccessAllowed;
 
   static const _activeLoginAccountKey = 'more_better_gakujo_active_login_account';
+  static const _plannerLoginScopeKey = 'more_better_gakujo_planner_login_scope';
 
   Future<void> _loadActiveLoginAccount() async {
     final revision = _loginIdentity.revision;
-    final restored = await SecureStorageFactory.create().read(key: _activeLoginAccountKey);
+    final storage = SecureStorageFactory.create();
+    final restored = await storage.read(key: _activeLoginAccountKey);
+    String? studentScope;
+    if (restored != null) {
+      try {
+        final identity = jsonDecode(await storage.read(key: _plannerLoginScopeKey) ?? 'null');
+        if (identity case {'account': final String account, 'student': final String student}
+            when account == restored && RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(student)) {
+          studentScope = student;
+        }
+      } on Object {
+        developer.log('Stored planner login scope unavailable');
+      }
+    }
     if (revision != _loginIdentity.revision ||
         (_loginIdentity.pageSeen && !_loginIdentity.pageConfirmed)) {
       return;
+    }
+    if (restored != null && studentScope != null) {
+      _plannerStudentScopes[restored] = studentScope;
     }
     _loginIdentity.restored = restored;
     if (_loginIdentity.pageSeen && _loginIdentity.pageConfirmed && restored != null) {
@@ -2481,18 +2498,38 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   /// Stored identity writes run in order, so an invalidating delete issued
   /// while an activation write is in flight lands after it.
   Future<void> _writeStoredLoginAccount(String? account) {
-    final write = _storedLoginAccountWrites.then((_) {
+    final student = account == null ? null : _plannerStudentScopeFor(account);
+    final write = _storedLoginAccountWrites.then((_) async {
       final storage = SecureStorageFactory.create();
-      return account == null
-          ? storage.delete(key: _activeLoginAccountKey)
-          : storage.write(key: _activeLoginAccountKey, value: account);
+      if (account == null) {
+        await storage.delete(key: _activeLoginAccountKey);
+      } else {
+        await storage.write(key: _activeLoginAccountKey, value: account);
+      }
+      try {
+        if (student == null) {
+          await storage.delete(key: _plannerLoginScopeKey);
+        } else {
+          await storage.write(key: _plannerLoginScopeKey, value: jsonEncode({
+            'account': account,
+            'student': student,
+          }));
+        }
+      } on Object {
+        developer.log('Planner login scope could not be saved');
+      }
     });
     _storedLoginAccountWrites = write.then<void>((_) {}, onError: (Object _) {});
     return write;
   }
 
   Future<void> _setActiveLoginAccount(String? account, {bool resync = true, bool Function()? stillValid}) async {
-    if (account != null && _activeLoginAccount == account) return;
+    if (account != null && _activeLoginAccount == account) {
+      if ((stillValid?.call() ?? true) && _plannerStudentScopeFor(account) != null) {
+        await _writeStoredLoginAccount(account);
+      }
+      return;
+    }
     _finishRegistration('ログイン状態が変わったため終了しました。');
     _setRegistrationAvailable(false);
     if (account == null) _authenticatedPageUrl = null;

@@ -4,9 +4,13 @@ enum _PlannerDestination { clipboard, registrationClipboard }
 
 extension _CoursePlannerActions on _GakujoWebAppState {
   String? _confirmedPlannerStudentScope() {
-    final id = _appSettings.savedLoginId;
     final account = _activeLoginAccount;
     if (!_loginIdentity.pageConfirmed || account == null) return null;
+    return _plannerStudentScopeFor(account);
+  }
+
+  String? _plannerStudentScopeFor(String account) {
+    final id = _appSettings.savedLoginId;
     return _plannerStudentScopes[account] ??
         (starSyncAccountHash(id) == account
             ? plannerStudentScope(id?.trim())
@@ -83,7 +87,9 @@ extension _CoursePlannerActions on _GakujoWebAppState {
     try {
       final storage = SecureStorageFactory.create();
       final googleAccount = starSyncAccountHash(session.email);
-      final key = 'planner_drive_capture_v3_${account}_$googleAccount';
+      // An earlier unscoped capture could not publish archived timetables.
+      final version = student == null ? 'v3' : 'v4';
+      final key = 'planner_drive_capture_${version}_${account}_$googleAccount';
       captureKey = key;
       final last = await storage.read(key: key);
       final now = DateTime.now().toUtc();
