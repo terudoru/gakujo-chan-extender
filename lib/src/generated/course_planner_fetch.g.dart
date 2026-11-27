@@ -524,6 +524,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
   var maxPageLength = 4 * 1024 * 1024;
   var requestTimeout = 8e3;
   var captureTimeout = 6e4;
+  var archiveProbeTimeout = 4e3;
   var balancePdfLimit = 2 * 1024 * 1024;
   var host = window;
   function servlet(url) {
@@ -677,16 +678,18 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
       signal.removeEventListener("abort", abort);
     }
   }
-  async function get(path, signal, deadline) {
+  var timedOut = Symbol("inquiry timed out");
+  async function get(path, signal, deadline, limit = requestTimeout) {
     const remaining = deadline - Date.now();
     if (signal.aborted || remaining <= 0) return null;
     const xhr = new XMLHttpRequest();
     const abort = () => xhr.abort();
     const loaded = await new Promise((resolve) => {
       xhr.open("GET", path);
-      xhr.timeout = Math.min(remaining, requestTimeout);
+      xhr.timeout = Math.min(remaining, limit);
       xhr.onload = () => resolve(true);
-      xhr.onerror = xhr.ontimeout = xhr.onabort = () => resolve(false);
+      xhr.onerror = xhr.onabort = () => resolve(false);
+      xhr.ontimeout = () => resolve(timedOut);
       signal.addEventListener("abort", abort, { once: true });
       try {
         xhr.send();
@@ -694,6 +697,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
         resolve(false);
       }
     }).finally(() => signal.removeEventListener("abort", abort));
+    if (loaded === timedOut) return timedOut;
     if (!loaded || xhr.status < 200 || xhr.status >= 300 || xhr.responseText.length > maxPageLength)
       return null;
     const href = xhr.responseURL || new URL(path, location.href).href;
@@ -715,7 +719,10 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
     ))
       return null;
     const deadline = Date.now() + captureTimeout;
-    const read = (path) => get(path, signal, deadline);
+    const read = async (path) => {
+      const result = await get(path, signal, deadline);
+      return result === timedOut ? null : result;
+    };
     const pages = [];
     const grades = await read(discover(docs, names.grades) || gradesFallback);
     if (grades) pages.push(__spreadValues({ source: "grades" }, grades));
@@ -723,6 +730,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
     const studentPage = studentPath ? await read(studentPath) : null;
     const first = await read(discover(docs, names.registration) || registrationFallback);
     const pending = /* @__PURE__ */ new Map();
+    const deferred = /* @__PURE__ */ new Map();
     const confirmed = /* @__PURE__ */ new Set();
     const attempted = /* @__PURE__ */ new Map();
     const unresolved = /* @__PURE__ */ new Set();
@@ -737,6 +745,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
         confirmed.add(key);
         unresolved.delete(key);
         pending.delete(key);
+        deferred.delete(key);
       }
       for (const link of Array.from(page.doc.querySelectorAll("a[href]"))) {
         const next = semesterTarget(link.getAttribute("href") || "", page.href, term == null ? void 0 : term.year);
@@ -751,15 +760,24 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
     const rootRead = first && includeRegistration(first);
     const balanceUrl = first && rootRead ? advertisedBalancePdf(first) : void 0;
     const balancePdf = balanceUrl ? await readBalancePdf(balanceUrl, signal, deadline) : null;
-    for (const [key, next] of pending) {
-      if (signal.aborted || Date.now() >= deadline) break;
-      pending.delete(key);
+    while (!signal.aborted && (pending.size || deferred.size)) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const retry = pending.size === 0;
+      const queue = retry ? deferred : pending;
+      const [key, next] = queue.entries().next().value;
+      const limit = !retry && pending.size * requestTimeout > remaining ? Math.max(1, Math.min(archiveProbeTimeout, Math.floor(remaining / pending.size) - 100)) : requestTimeout;
+      queue.delete(key);
       const seen = (_a = attempted.get(key)) != null ? _a : /* @__PURE__ */ new Set();
       seen.add(next.path);
       attempted.set(key, seen);
-      const page = await read(next.path);
-      if (page && includeRegistration(page, next)) unresolved.delete(key);
-      else unresolved.add(key);
+      const page = await get(next.path, signal, deadline, limit);
+      if (page && page !== timedOut && includeRegistration(page, next)) {
+        unresolved.delete(key);
+      } else {
+        unresolved.add(key);
+        if (!retry && page === timedOut && limit < requestTimeout) deferred.set(key, next);
+      }
     }
     const packets = {};
     const registration = [];
@@ -816,7 +834,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
     const ordered = {};
     for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
     const gradePageRead = grades && extractor(staticView(grades.href)).pageKinds(grades.doc).includes("grades");
-    const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) && (!balanceUrl || !!balancePdf) && registrationFits && pending.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
+    const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) && (!balanceUrl || !!balancePdf) && registrationFits && pending.size === 0 && deferred.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
     return __spreadValues({
       v: 1,
       packets: ordered,

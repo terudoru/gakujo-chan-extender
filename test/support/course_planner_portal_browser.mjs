@@ -508,6 +508,59 @@ try {
   assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, regSem2Url, ...archivedTerms.map(archiveLink)]);
   assert.ok(requests.every(request => request.method === "GET"));
 
+  // Represent multiple slow links without waiting a real minute. The generated
+  // script still drives Chromium's XHR and parses the actual fixture documents.
+  const slowScopes = Array.from({length:8}, (_, index) => [2016 + index, 1]);
+  const lastAvailable = [2024, 1];
+  const slowLinks = slowScopes.map(archiveLink);
+  const beforeSlowTest = new Map([regFlowUrl,archiveLink(lastAvailable),slowLinks[0]]
+    .map(path => [path,delayed.get(path)]));
+  delayed.set(regFlowUrl, sem1Html + [...slowScopes,lastAvailable].map(archiveAnchor).join(""));
+  delayed.set(archiveLink(lastAvailable), archivePage(lastAvailable));
+  delayed.set(slowLinks[0], archivePage(slowScopes[0]));
+  await page.evaluate(slow => {
+    const paths = new WeakMap();
+    const count = new Map();
+    const {open,send} = XMLHttpRequest.prototype;
+    const now = Date.now;
+    let elapsed = 0;
+    Date.now = () => now() + elapsed;
+    XMLHttpRequest.prototype.open = function(method, path, ...rest) {
+      paths.set(this,new URL(path,location.href).href);
+      return open.call(this,method,path,...rest);
+    };
+    XMLHttpRequest.prototype.send = function(...args) {
+      const path = paths.get(this);
+      if (!slow.includes(path)) return send.call(this,...args);
+      const attempt = (count.get(path) || 0) + 1;
+      count.set(path,attempt);
+      if (path === slow[0] && attempt > 1) return send.call(this,...args);
+      elapsed += this.timeout;
+      queueMicrotask(() => this.dispatchEvent(new ProgressEvent("timeout")));
+    };
+    window.restoreFixtureClock = () => {
+      Date.now = now;
+      XMLHttpRequest.prototype.open = open;
+      XMLHttpRequest.prototype.send = send;
+      delete window.restoreFixtureClock;
+    };
+  },slowLinks);
+  try {
+    requests.length = 0;
+    const slowPartial = await runFetch();
+    assert.equal(slowPartial.complete,false);
+    assert.ok(slowPartial.timetable.some(term => term.year === "2024"));
+    assert.ok(slowPartial.timetable.some(term => term.year === "2016"));
+    const issued = requests.map(({url}) => url);
+    assert.ok(issued.indexOf(archiveLink(lastAvailable)) < issued.indexOf(slowLinks[0]));
+  } finally {
+    await page.evaluate(() => window.restoreFixtureClock());
+    for (const [path, body] of beforeSlowTest) {
+      if (body === undefined) delayed.delete(path);
+      else delayed.set(path,body);
+    }
+  }
+
   // A held request leaves the page usable. Another WebView attempt cannot
   // consume or cancel this attempt's data.
   let releaseResponse;

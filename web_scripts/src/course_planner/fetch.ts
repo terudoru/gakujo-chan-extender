@@ -33,6 +33,7 @@ const gradesFallback =
 const maxPageLength = 4 * 1024 * 1024;
 const requestTimeout = 8000;
 const captureTimeout = 60000;
+const archiveProbeTimeout = 4000;
 const balancePdfLimit = 2 * 1024 * 1024;
 type Term = Pick<TimetableSnapshot, "year" | "semester">;
 type Target = { path: string; year?: string; semester: Term["semester"] };
@@ -218,19 +219,23 @@ async function readBalancePdf(url: string, signal: AbortSignal, deadline: number
   }
 }
 
-async function get(path: string, signal: AbortSignal, deadline: number) {
+const timedOut = Symbol("inquiry timed out");
+
+async function get(path: string, signal: AbortSignal, deadline: number, limit = requestTimeout) {
   const remaining = deadline - Date.now();
   if (signal.aborted || remaining <= 0) return null;
   const xhr = new XMLHttpRequest();
   const abort = () => xhr.abort();
-  const loaded = await new Promise<boolean>((resolve) => {
+  const loaded = await new Promise<boolean | typeof timedOut>((resolve) => {
     xhr.open("GET", path);
-    xhr.timeout = Math.min(remaining, requestTimeout);
+    xhr.timeout = Math.min(remaining, limit);
     xhr.onload = () => resolve(true);
-    xhr.onerror = xhr.ontimeout = xhr.onabort = () => resolve(false);
+    xhr.onerror = xhr.onabort = () => resolve(false);
+    xhr.ontimeout = () => resolve(timedOut);
     signal.addEventListener("abort", abort, {once:true});
     try { xhr.send(); } catch { resolve(false); }
   }).finally(() => signal.removeEventListener("abort", abort));
+  if (loaded === timedOut) return timedOut;
   if (!loaded || xhr.status < 200 || xhr.status >= 300 || xhr.responseText.length > maxPageLength)
     return null;
   const href = xhr.responseURL || new URL(path, location.href).href;
@@ -258,7 +263,10 @@ async function fetchInquiries(signal: AbortSignal) {
   )
     return null;
   const deadline = Date.now() + captureTimeout;
-  const read = (path: string) => get(path, signal, deadline);
+  const read = async (path: string) => {
+    const result = await get(path, signal, deadline);
+    return result === timedOut ? null : result;
+  };
   const pages: Page[] = [];
   const grades = await read(discover(docs, names.grades) || gradesFallback);
   if (grades) pages.push({ source: "grades", ...grades });
@@ -267,6 +275,7 @@ async function fetchInquiries(signal: AbortSignal) {
   const studentPage = studentPath ? await read(studentPath) : null;
   const first = await read(discover(docs, names.registration) || registrationFallback);
   const pending = new Map<string, Target>();
+  const deferred = new Map<string, Target>();
   const confirmed = new Set<string>();
   const attempted = new Map<string, Set<string>>();
   const unresolved = new Set<string>();
@@ -281,6 +290,7 @@ async function fetchInquiries(signal: AbortSignal) {
       confirmed.add(key);
       unresolved.delete(key);
       pending.delete(key);
+      deferred.delete(key);
     }
     for (const link of Array.from(page.doc.querySelectorAll("a[href]"))) {
       const next = semesterTarget(link.getAttribute("href") || "", page.href, term?.year);
@@ -296,15 +306,28 @@ async function fetchInquiries(signal: AbortSignal) {
   const balanceUrl = first && rootRead ? advertisedBalancePdf(first) : undefined;
   // The registration flow's current report takes precedence over the archive.
   const balancePdf = balanceUrl ? await readBalancePdf(balanceUrl, signal, deadline) : null;
-  for (const [key, next] of pending) {
-    if (signal.aborted || Date.now() >= deadline) break;
-    pending.delete(key);
+  // Follow Spring flow links sequentially. A full timeout on every slow link
+  // can exhaust the capture before it visits the other advertised semesters.
+  while (!signal.aborted && (pending.size || deferred.size)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const retry = pending.size === 0;
+    const queue = retry ? deferred : pending;
+    const [key, next] = queue.entries().next().value!;
+    const limit = !retry && pending.size * requestTimeout > remaining
+      ? Math.max(1, Math.min(archiveProbeTimeout, Math.floor(remaining / pending.size) - 100))
+      : requestTimeout;
+    queue.delete(key);
     const seen = attempted.get(key) ?? new Set<string>();
     seen.add(next.path);
     attempted.set(key, seen);
-    const page = await read(next.path);
-    if (page && includeRegistration(page, next)) unresolved.delete(key);
-    else unresolved.add(key);
+    const page = await get(next.path, signal, deadline, limit);
+    if (page && page !== timedOut && includeRegistration(page, next)) {
+      unresolved.delete(key);
+    } else {
+      unresolved.add(key);
+      if (!retry && page === timedOut && limit < requestTimeout) deferred.set(key, next);
+    }
   }
 
   const packets: Partial<Record<Kind, Packet>> = {};
@@ -370,7 +393,7 @@ async function fetchInquiries(signal: AbortSignal) {
   for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
   const gradePageRead = grades && extractor(staticView(grades.href)).pageKinds(grades.doc).includes("grades");
   const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) && (!balanceUrl || !!balancePdf) &&
-    registrationFits && pending.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
+    registrationFits && pending.size === 0 && deferred.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
   return {v:1, packets:ordered, timetable:[...timetable.values()].filter(value => value !== null), complete,
     ...(balancePdf && {balancePdf})};
 }
