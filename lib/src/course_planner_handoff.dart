@@ -577,3 +577,138 @@ String? mergeCoursePlannerRegistration(String newer, String older) {
     ],
   }, kind);
 }
+
+typedef _GradeRow = ({
+  Map<String, String> cells,
+  String? year,
+  String title,
+  String? offering,
+});
+
+Iterable<_GradeRow?> _gradeRows(Map<String, dynamic> packet) sync* {
+  final scope = packet['year'] as String?;
+  for (final table in packet['tables'] as List) {
+    final rows = table['rows'] as List;
+    final headers = (rows.first as List).cast<String>();
+    for (final raw in rows.skip(1)) {
+      final values = (raw as List).cast<String>();
+      final cells = {
+        for (final (i, header) in headers.indexed) header: values[i],
+      };
+      if (values.every((value) => value.trim().isEmpty)) continue;
+      final printed = cells['年度']?.trim() ?? '';
+      final year = printed.isEmpty ? scope : _registrationYear.firstMatch(printed)?.group(1);
+      if (printed.isNotEmpty && (year == null || scope != null && scope != year)) {
+        yield null;
+        continue;
+      }
+      if (year != null) cells['年度'] = year;
+      final code = cells['開講番号']?.trim().toUpperCase() ?? '';
+      final offering = year != null &&
+              _registrationCode.firstMatch(code)?.group(1) == code &&
+              code.startsWith(year.substring(2))
+          ? '$year/$code'
+          : null;
+      yield (cells: cells, year: year, title: cells['科目名']?.trim() ?? '', offering: offering);
+    }
+  }
+}
+
+bool _sameGradeCells(_GradeRow a, _GradeRow b) =>
+    a.cells.length == b.cells.length &&
+    a.cells.entries.every((cell) => b.cells[cell.key] == cell.value);
+
+bool _clearGradeResult(_GradeRow row) {
+  final grade = (row.cells['評価'] ?? row.cells['合否'] ?? '').trim();
+  final result = row.cells['合否']?.trim() ?? '';
+  final failed = const {'不可', '不合格'}.contains(grade);
+  if (!failed && !RegExp(r'^(秀|優|良|可|合格|修得|S|A\+?|B\+?|C\+?|P)$', caseSensitive: false).hasMatch(grade)) {
+    return false;
+  }
+  if (result.isNotEmpty && result != grade &&
+      !(failed ? const {'不可', '不合格', '否'} : const {'合', '合格'}).contains(result)) {
+    return false;
+  }
+  final units = RegExp(r'^\d{1,4}(?:\.\d{1,2})?(?:単位)?$');
+  double? credits(String? value) {
+    final printed = value?.trim() ?? '';
+    return units.hasMatch(printed) ? double.tryParse(printed.replaceAll('単位', '')) : null;
+  }
+  final allocated = credits(row.cells['単位数'] ?? row.cells['修得単位数']);
+  final earned = credits(row.cells['修得単位数']);
+  final duplicate = row.cells['重複']?.trim() ?? '';
+  return allocated != null && (failed || allocated > 0) &&
+      (!row.cells.containsKey('修得単位数') || earned == (failed ? 0 : allocated)) &&
+      const {'', 'なし', '-', '無'}.contains(duplicate);
+}
+
+/// Combine queries for one verified student. Retain missing and ambiguous
+/// records, and replace a grade only on an exact, unique offering match.
+({String token, bool pending})? mergeCoursePlannerGrades(
+  String captured,
+  String stored, {
+  bool refreshExisting = true,
+}) {
+  if (captured == stored) return (token: stored, pending: false);
+  const kind = CoursePlannerImportKind.grades;
+  final current = _decodeCoursePlannerToken(captured, kind);
+  final previous = _decodeCoursePlannerToken(stored, kind);
+  if (current == null || previous == null) return null;
+  final recent = _gradeRows(current).toList(), prior = _gradeRows(previous).toList();
+  final incoming = recent.whereType<_GradeRow>().toList();
+  final saved = prior.whereType<_GradeRow>().toList();
+  var pending = incoming.length != recent.length || saved.length != prior.length;
+  final byOffering = <String, List<_GradeRow>>{}, byTitle = <String, List<_GradeRow>>{};
+  for (final row in saved) {
+    if (row.offering case final offering?) {
+      byOffering.putIfAbsent(offering, () => []).add(row);
+    }
+    if (row.title.isNotEmpty) byTitle.putIfAbsent(row.title, () => []).add(row);
+  }
+  final counts = <String, int>{};
+  for (final row in incoming) {
+    if (row.offering case final offering?) counts.update(offering, (count) => count + 1, ifAbsent: () => 1);
+  }
+  final replacements = <_GradeRow, _GradeRow>{};
+  final additions = <_GradeRow>[];
+  for (final row in incoming) {
+    final peers = [
+      ...byOffering[row.offering] ?? <_GradeRow>[],
+      for (final old in byTitle[row.title] ?? <_GradeRow>[])
+        if ((old.offering == null || row.offering == null) &&
+            (old.year == null || row.year == null || old.year == row.year)) old,
+    ];
+    if (peers.isEmpty) {
+      if (row.title.isNotEmpty || row.offering != null ||
+          !saved.any((old) => _sameGradeCells(old, row))) {
+        additions.add(row);
+      }
+    } else if (refreshExisting && !peers.any((old) => _sameGradeCells(old, row))) {
+      final old = peers.length == 1 ? peers.single : null;
+      final exact = old != null && row.offering != null && old.offering == row.offering &&
+          counts[row.offering] == 1 && row.title.isNotEmpty && old.title == row.title &&
+          const ['クラス', '学期', '開講所属'].every((key) =>
+              (old.cells[key]?.trim() ?? '') == (row.cells[key]?.trim() ?? ''));
+      if (exact && _clearGradeResult(row)) {
+        replacements[old] = row;
+      } else {
+        pending = true;
+      }
+    }
+  }
+  if (additions.isEmpty && replacements.isEmpty) return (token: stored, pending: pending);
+  final grouped = <String, List<List<String>>>{};
+  for (final row in [...saved.map((old) => replacements[old] ?? old), ...additions]) {
+    final headers = row.cells.keys.toList();
+    grouped.putIfAbsent(jsonEncode(headers), () => [headers]).add(row.cells.values.toList());
+  }
+  if (grouped.values.fold(0, (count, table) => count + table.length) > 12000) return null;
+  final token = encodeCoursePlannerHandoff({
+    'v': 1,
+    'kind': kind.name,
+    'tables': [
+      for (final rows in grouped.values) {'heading': '単位修得状況照会', 'rows': rows},
+    ],
+  }, kind);
+  return token == null ? null : (token: token, pending: pending);
+}

@@ -228,6 +228,81 @@ void main() {
     expect(drive.bytes, fixture);
   });
 
+  test('grade refreshes retain absent years and only replace an exact result', () async {
+    final drive = _Drive();
+    const kind = CoursePlannerImportKind.grades;
+    Future<bool> publish(int day, List<List<String>> rows, {String? year}) {
+      final headers = [
+        if (year == null) '年度', '開講番号', '科目名', '単位数', '評価',
+      ];
+      final token = encodeCoursePlannerHandoff({
+        'v': 1, 'kind': kind.name,
+        'tables': [{'heading': '単位修得状況照会', 'rows': [headers, ...rows]}],
+        'year': ?year,
+      }, kind)!;
+      return share(drive, packets: [(kind, token)],
+        preserveAcademicHistory: true, at: time.add(Duration(days: day)));
+    }
+    Map<String, List<String>> savedGrades() {
+      final data = decodeDrivePlannerHandoff(drive.bytes!);
+      final token = (data['packets'] as List).single['token'] as String;
+      final packet = _packetFromToken(token);
+      final byCode = <String, List<String>>{};
+      for (final table in packet['tables'] as List) {
+        final rows = table['rows'] as List;
+        final headers = rows.first as List;
+        for (final raw in rows.skip(1)) {
+          final row = (raw as List).cast<String>();
+          final code = row[headers.indexOf('開講番号')];
+          expect(byCode.containsKey(code), isFalse);
+          byCode[code] = [
+            row[headers.indexOf('年度')], row[headers.indexOf('科目名')],
+            row[headers.indexOf('単位数')], row[headers.indexOf('評価')],
+          ];
+        }
+      }
+      return byCode;
+    }
+    expect(await publish(0, [
+      ['2024', '240H1001', '旧年度の科目', '2', '秀'],
+      ['2026', '260H1002', '訂正対象の科目', '2', '良'],
+    ]), isTrue);
+    expect(await publish(2, [
+      ['260H1002', '訂正対象の科目', '2', '不可'],
+    ], year: '2026'), isTrue);
+    expect(savedGrades(), {
+      '240H1001': ['2024', '旧年度の科目', '2', '秀'],
+      '260H1002': ['2026', '訂正対象の科目', '2', '不可'],
+    });
+
+    expect(await publish(1, [
+      ['2026', '260H1002', '訂正対象の科目', '2', '良'],
+      ['2025', '250H1003', '後から見つかった科目', '1', '良'],
+    ]), isTrue);
+    expect(savedGrades()['260H1002']?.last, '不可');
+    expect(savedGrades()['250H1003'], ['2025', '後から見つかった科目', '1', '良']);
+
+    expect(await publish(3, [
+      ['2026', '260H1002', '訂正対象の科目', '2', '保留'],
+      ['2025', '250H1004', '別の科目', '2', '優'],
+    ]), isFalse);
+    expect(savedGrades()['260H1002']?.last, '不可');
+    expect(savedGrades()['250H1004']?.last, '優');
+    expect(await publish(4, [
+      ['2026', '260H1002', '訂正対象の科目', '2', '優'],
+      ['2026', '260H1002', '訂正対象の科目', '2', '可'],
+    ]), isFalse);
+    expect(await publish(5, [
+      ['2026', '260H1002', '別名の科目', '2', '優'],
+    ]), isFalse);
+    expect(savedGrades()['260H1002']?.last, '不可');
+    expect(await publish(6, [
+      ['2026', '260H1002', '訂正対象の科目', '2', '優'],
+    ]), isTrue);
+    expect(savedGrades()['260H1002']?.last, '優');
+    expect(savedGrades().keys, containsAll(['240H1001', '250H1003', '250H1004']));
+  });
+
   test('a flat inquiry cannot discard a previously captured split credit report', () async {
     const kind = CoursePlannerImportKind.balances;
     final split = encodeCoursePlannerHandoff({

@@ -141,6 +141,12 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       };
       for (final (kind, token) in displayed) {
         final backgroundToken = byKind[kind];
+        if (kind == CoursePlannerImportKind.grades && student != null && backgroundToken != null) {
+          final combined = mergeCoursePlannerGrades(backgroundToken, token);
+          if (combined != null) byKind[kind] = combined.token;
+          complete &= combined?.pending == false;
+          continue;
+        }
         byKind[kind] = switch (kind) {
           CoursePlannerImportKind.profile =>
             reuseCoursePlannerEnrollmentFacts(token, backgroundToken),
@@ -179,7 +185,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
             capturedAt: capturedAt,
             preserveAcademicHistory: student != null,
           );
-      if (timetablePending && !retryCapture && allowed()) {
+      if ((timetablePending || !success) && !retryCapture && allowed()) {
         await storage.delete(key: key);
         retryCapture = true;
       }

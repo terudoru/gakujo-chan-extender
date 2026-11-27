@@ -129,7 +129,15 @@ Future<bool> shareDrivePlannerHandoffs({
       final newer = supersedes ? token : prior;
       final older = supersedes ? prior : token;
       at = supersedes ? timestamp : savedAt;
-      if (kind == CoursePlannerImportKind.registration) {
+      if (kind == CoursePlannerImportKind.grades) {
+        final combined = mergeCoursePlannerGrades(token, prior, refreshExisting: supersedes);
+        if (combined == null) {
+          complete = false;
+          continue;
+        }
+        next = combined.token;
+        complete &= !combined.pending;
+      } else if (kind == CoursePlannerImportKind.registration) {
         final combined = mergeCoursePlannerRegistration(newer, older);
         if (combined == null) {
           complete = false;
