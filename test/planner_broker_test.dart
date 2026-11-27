@@ -91,6 +91,7 @@ void main() {
   late Drive drive;
   late PlannerBroker broker;
   late int signIns;
+  final authorized = <String?>[];
   final events = <Map<String, dynamic>>[];
   const id = '00000000-0000-4000-8000-000000000001';
   Future<Map<String, dynamic>> call(
@@ -104,6 +105,7 @@ void main() {
   setUp(() {
     auth = Auth();
     signIns = 0;
+    authorized.clear();
     drive = Drive();
     drive.files =
         fixture['operations'][3]['response']['result']['files'] as List;
@@ -123,6 +125,7 @@ void main() {
         auth.email = null;
         auth.revision++;
       },
+      onAuthorized: () => authorized.add(auth.currentEmail),
       onSession: events.add,
       timeout: const Duration(milliseconds: 100),
     );
@@ -145,6 +148,7 @@ void main() {
       expect(auth.revision, 0);
       expect(broker.generation, generation);
       expect(events, isEmpty);
+      expect(authorized, [auth.email]);
     },
   );
   test(
@@ -168,6 +172,7 @@ void main() {
         },
       });
       expect(events.single['session'], result['result']['session']);
+      expect(authorized, [auth.email]);
     },
   );
   test('missing scope requests consent for the existing account', () async {
@@ -184,6 +189,7 @@ void main() {
     expect(signIns, 0);
     expect(auth.scopeRequests.single, starSyncGoogleScopes);
     expect(broker.generation, greaterThan(generation));
+    expect(authorized, [auth.email]);
   });
   test(
     'account change during scope check cannot start interactive auth',
@@ -198,8 +204,22 @@ void main() {
       expect(signIns, 0);
       expect(auth.scopeRequests, isEmpty);
       expect(events, isEmpty);
+      expect(authorized, isEmpty);
     },
   );
+  test('authorization starts sharing even if the planner owner lookup stalls', () async {
+    auth.email = null;
+    drive.pendingOwner = Completer<String>();
+    final signIn = call('signIn');
+    await Future<void>.delayed(Duration.zero);
+    try {
+      expect(authorized, [auth.email]);
+      expect(events, isEmpty);
+    } finally {
+      drive.pendingOwner!.complete(drive.owner);
+      expect((await signIn)['ok'], true);
+    }
+  });
   final hash = fixture['studentHash'] as Map;
   test('studentHash vector includes the exact salt and newline separator', () {
     expect(plannerStudentSalt, hash['salt']);

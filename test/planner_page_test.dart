@@ -9,10 +9,15 @@ import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 class _Auth extends Fake implements StarSyncGoogleAuth {
   int revision = 0;
+  String? email;
   @override
   int get generation => revision;
   @override
-  String? get currentEmail => null;
+  String? get currentEmail => email;
+  @override
+  Future<String> accessToken({bool forceRefresh = false}) async {
+    throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.network);
+  }
 }
 
 class _Controller extends Fake implements GakujoWebViewController {
@@ -63,6 +68,54 @@ class _Service extends Fake implements GakujoWebViewService {
 }
 
 void main() {
+  testWidgets('Google sign-in notifies the host without reopening the planner', (
+    tester,
+  ) async {
+    final service = _Service();
+    final auth = _Auth();
+    var cancel = true;
+    final authorized = <String?>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HostedPlannerPage(
+          service: service,
+          auth: auth,
+          student: () => null,
+          signIn: () async {
+            if (cancel) {
+              throw const StarSyncGoogleAuthException(
+                StarSyncGoogleAuthErrorKind.cancelled,
+              );
+            }
+            auth.email = 'authorized@example.invalid';
+            auth.revision++;
+          },
+          signOut: () async {},
+          onExternalLink: (_) {},
+          onAuthorized: () => authorized.add(auth.currentEmail),
+        ),
+      ),
+    );
+    await tester.pump();
+    final controller = service.controller;
+    await controller.delegate.onPageFinished!(controller.url!);
+    final capability = RegExp(r'const capability = "([a-f0-9]+)"')
+        .firstMatch(controller.scripts.first)!
+        .group(1);
+    Future<void> signIn(String id) async => controller.receive(jsonEncode([
+      capability,
+      jsonEncode({'v': 2, 'id': id, 'op': 'signIn', 'args': {}}),
+    ]));
+    await signIn('00000000-0000-4000-8000-000000000001');
+    expect(controller.scripts.last, contains('"code":"auth-cancelled"'));
+    expect(authorized, isEmpty);
+    cancel = false;
+    await signIn('00000000-0000-4000-8000-000000000002');
+    expect(controller.scripts.last, contains('"code":"network"'));
+    expect(authorized, [auth.email]);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final navigation in ['fragment', 'document', 'path', 'query']) {
     testWidgets('bridge capability after $navigation navigation', (
       tester,

@@ -71,6 +71,7 @@ class PlannerBroker {
     required this.student,
     required this.signIn,
     required this.signOut,
+    this.onAuthorized,
     this.onSession,
     this.timeout = const Duration(seconds: 30),
   });
@@ -79,6 +80,7 @@ class PlannerBroker {
   final String? Function() student;
   final Future<void> Function() signIn;
   final Future<void> Function() signOut;
+  final void Function()? onAuthorized;
   final void Function(Map<String, dynamic>)? onSession;
   final Duration timeout;
   int generation = 0;
@@ -271,6 +273,8 @@ class PlannerBroker {
             }
           }
         }
+        // Sharing can retry independently of the planner's Drive owner lookup.
+        if (!_disposed && auth.currentEmail != null) onAuthorized?.call();
         await refreshSession();
         return {'session': session};
       case 'signOut':

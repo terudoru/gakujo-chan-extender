@@ -6185,6 +6185,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (!await _signOutGoogle(warn: false)) throw const PlannerBridgeException('network');
             _starSyncGoogleEmail = null;
           },
+          onAuthorized: () => unawaited(_autoSharePlannerResults()),
           onExternalLink: (uri) => unawaited(_launchExternalUrl(uri)),
         )));
         return;

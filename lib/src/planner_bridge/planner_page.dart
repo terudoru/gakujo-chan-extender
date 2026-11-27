@@ -22,6 +22,7 @@ class HostedPlannerPage extends StatefulWidget {
     required this.signIn,
     required this.signOut,
     required this.onExternalLink,
+    this.onAuthorized,
   });
   final GakujoWebViewService service;
   final StarSyncGoogleAuth auth;
@@ -29,6 +30,7 @@ class HostedPlannerPage extends StatefulWidget {
   final Future<void> Function() signIn;
   final Future<void> Function() signOut;
   final ValueChanged<Uri> onExternalLink;
+  final VoidCallback? onAuthorized;
   @override
   State<HostedPlannerPage> createState() => _HostedPlannerPageState();
 }
@@ -60,6 +62,7 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
       student: widget.student,
       signIn: widget.signIn,
       signOut: widget.signOut,
+      onAuthorized: widget.onAuthorized,
       onSession: (event) {
         if (_authReplies > 0) {
           _deferredSessions.add((event, _document));
