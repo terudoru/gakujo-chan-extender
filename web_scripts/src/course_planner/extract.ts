@@ -583,7 +583,7 @@ export function extractor(view: View) {
       ...(year ? { year } : {}),
     };
   }
-  return { visible, pageKinds, academicTables, profile, admissionYear, packet, timetableSnapshot };
+  return { visible, pageKinds, academicTables, profile, admissionYear, packet, registrationTerm, timetableSnapshot };
 }
 
 export function withinBounds(tables: Table[]) {

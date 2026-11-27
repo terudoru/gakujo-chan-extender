@@ -18,17 +18,8 @@ async function generated(name) {
   );
   return (config) => prefix + JSON.stringify(config) + suffix;
 }
-async function generatedScript(name) {
-  const file = new URL(
-    "../../lib/src/generated/course_planner_" + name + ".g.dart",
-    import.meta.url,
-  );
-  const text = await readFile(file, "utf8");
-  const [, script] = text.match(/=\s*r'''([\s\S]*?)''';/);
-  return script;
-}
 const capture = await generated("capture");
-const fetchScript = await generatedScript("fetch");
+const fetchScript = await generated("fetch");
 const portal = "https://gakujo.iess.niigata-u.ac.jp/campusweb/";
 const delayed = new Map();
 const redirects = new Map();
@@ -264,7 +255,17 @@ try {
   assert.equal(await ask({}), null);
 
   // --- Background fetch tests (discovery, parity, multi-kind, session expiry) ---
-  const runFetch = async () => JSON.parse(await page.evaluate(fetchScript));
+  let fetchAttempt = 0;
+  const runFetch = async () => {
+    const attempt = String(++fetchAttempt);
+    assert.equal(await page.evaluate(fetchScript({attempt})), "pending");
+    let value = "pending";
+    while (value === "pending") {
+      value = await page.evaluate(owner => window.__mbgPlannerFetch?.take(owner), attempt);
+      if (value === "pending") await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    return JSON.parse(value);
+  };
   const gradesFlowUrl = portal + "campussquare.do?_flowId=SIW0001300-flow";
   const regFlowUrl = portal + "campussquare.do?_flowId=RSW0001000-flow";
   const regSem2Url =
@@ -440,6 +441,66 @@ try {
     {code:"251G7099", title:"合成後期", status:"許可", day:2, period:3},
   ]);
   assert.doesNotMatch(JSON.stringify(history.timetable), /非公開|教室|不許可/);
+  assert.equal(history.complete, true);
+
+  // The first page can expose only the next semester or year. Follow the
+  // pages that become available from there, including more than four links.
+  const archivedTerms = [
+    [2025, 2], [2025, 1], [2024, 2], [2024, 1],
+    [2023, 2], [2023, 1], [2022, 2],
+  ];
+  const archiveLink = ([year, semester]) =>
+    portal + "campussquare.do?_flowId=RSW0001000-flow&_eventId=search&gakkiKbnCode=" + semester + "&nendo=" + year;
+  const archiveAnchor = scope => '<a href="' + archiveLink(scope) + '">履修照会</a>';
+  const archivePage = ([year, semester]) => sem2Html
+    .replaceAll("2026年度 第2学期", year + "年度 第" + semester + "学期")
+    .replaceAll("'2026'", "'" + year + "'")
+    .replaceAll("261G", String(year).slice(-2) + "1G");
+  delayed.set(regFlowUrl, sem1Html + archiveAnchor(archivedTerms[0]));
+  for (const [index, scope] of archivedTerms.entries()) {
+    const next = archivedTerms[index + 1];
+    const back = archivedTerms[index - 1];
+    delayed.set(archiveLink(scope), archivePage(scope) +
+      (next ? archiveAnchor(next) : "") + (back ? archiveAnchor(back) : ""));
+  }
+  const wrong = archivedTerms[3];
+  const wrongUrl = archiveLink(wrong);
+  const correctPage = delayed.get(wrongUrl);
+  delayed.set(wrongUrl, archivePage([2021, 2]));
+  // An independent link still succeeds after the incorrect response.
+  delayed.set(regSem2Url, sem2Html + archiveAnchor(archivedTerms.at(-1)));
+  const partial = await runFetch();
+  assert.equal(partial.complete, false);
+  assert.ok(partial.timetable.some(term => term.year === "2022"));
+  assert.ok(!partial.timetable.some(term => term.year === "2021"));
+  delayed.set(wrongUrl, correctPage);
+  delayed.set(regSem2Url, sem2Html);
+  requests.length = 0;
+  const recovered = await runFetch();
+  assert.equal(recovered.complete, true);
+  assert.deepEqual(recovered.timetable.map(term => [Number(term.year), term.semester === "first" ? 1 : 2]),
+    [[2026, 1], [2026, 2], ...archivedTerms]);
+  assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, regSem2Url, ...archivedTerms.map(archiveLink)]);
+  assert.ok(requests.every(request => request.method === "GET"));
+
+  // A held request leaves the page usable. Another WebView attempt cannot
+  // consume or cancel this attempt's data.
+  let releaseResponse;
+  const blockedResponse = new Promise(resolve => { releaseResponse = resolve; });
+  await context.route(gradesFlowUrl, async route => {
+    await blockedResponse;
+    await route.fulfill({body:parityGradesHtml, contentType:"text/html; charset=utf-8"});
+  });
+  const pendingResult = runFetch();
+  await page.waitForFunction(() => !!window.__mbgPlannerFetch);
+  assert.equal(await page.evaluate(() => {
+    window.__mbgPlannerFetch.cancel("another-attempt");
+    return window.__mbgPlannerFetch.take("another-attempt");
+  }), null);
+  releaseResponse();
+  assert.equal((await pendingResult).complete, true);
+  await context.unroute(gradesFlowUrl);
+
   delayed.set(regFlowUrl, sem1Html);
 
   const studentUrl = portal + "campussquare.do?_flowId=TestStudentInquiry-flow";
@@ -460,7 +521,7 @@ try {
   requests.length = 0;
   const fromInquiry = (await runFetch()).packets.profile;
   assert.deepEqual(fromInquiry, directStudent);
-  assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, regSem2Url, studentUrl]);
+  assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, studentUrl, regFlowUrl, regSem2Url]);
   delayed.set(studentUrl, studentHtml + '<table><tr><th>入学年度</th><td>2023年度</td></tr></table>');
   assert.equal((await runFetch()).packets.profile.year, undefined);
   delayed.set(studentUrl, studentHtml.replace("2024/04/02", "2024/02/30"));

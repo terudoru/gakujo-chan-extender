@@ -208,6 +208,28 @@ void main() {
     expect(evaluated, isTrue);
   });
 
+  test('background capture polls the WebView and clears its own attempt', () async {
+    final scripts = <String>[];
+    final portal = _View()
+      ..evaluate = (script) async {
+        scripts.add(script);
+        if (!script.contains('__mbgPlannerFetch?.take(')) return jsonEncode('pending');
+        return jsonEncode(jsonEncode({
+          'v': 1,
+          'packets': <String, dynamic>{},
+          'timetable': [{'year': '2025', 'semester': 'second', 'meetings': []}],
+          'complete': false,
+        }));
+      };
+    final (packets, timetable, complete) = await fetchCoursePlannerCapture(portal, () => true);
+    expect(packets, isEmpty);
+    expect(timetable.single, containsPair('year', '2025'));
+    expect(complete, isFalse);
+    final owner = RegExp(r'"attempt":"([A-Za-z0-9_-]+)"').firstMatch(scripts.first)!.group(1)!;
+    expect(scripts[1], contains('take("$owner")'));
+    expect(scripts[2], contains('cancel("$owner")'));
+  });
+
   test('supplementCoursePlannerHandoffs merges displayed kinds in order and preserves fetched on error', () async {
     const regPacket = {
       'v': 1,

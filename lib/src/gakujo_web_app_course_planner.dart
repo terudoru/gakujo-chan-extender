@@ -78,15 +78,17 @@ extension _CoursePlannerActions on _GakujoWebAppState {
     }
 
     StarSyncGoogleDriveTransport? transport;
+    var retryCapture = false;
     try {
       final storage = SecureStorageFactory.create();
       final googleAccount = starSyncAccountHash(session.email);
-      final key = 'planner_drive_capture_v2_${account}_$googleAccount';
+      final key = 'planner_drive_capture_v3_${account}_$googleAccount';
       final last = await storage.read(key: key);
       final now = DateTime.now().toUtc();
       final attempt = _plannerShareAttempts[key];
+      retryCapture = plannerCaptureDue(last, now);
       final background =
-          plannerCaptureDue(last, now) &&
+          retryCapture &&
           (attempt == null ||
               now.difference(attempt) >= const Duration(minutes: 5));
       if (!captureAllowed()) return;
@@ -118,9 +120,11 @@ extension _CoursePlannerActions on _GakujoWebAppState {
           : null;
       var fetched = const <(CoursePlannerImportKind, String)>[];
       var fetchedTimetable = const <Object?>[];
+      var complete = false;
       if (background) {
         try {
-          (fetched, fetchedTimetable) = await fetchCoursePlannerCapture(_controller, captureAllowed);
+          (fetched, fetchedTimetable, complete) =
+              await fetchCoursePlannerCapture(_controller, captureAllowed);
         } on Object {
           // The displayed inquiry is still available while the portal retries.
         }
@@ -129,12 +133,16 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         for (final term in [...fetchedTimetable, displayedTimetable])
           if (term is Map<String, dynamic>) (term['year'], term['semester']): term,
       }.values.toList();
-      // The displayed inquiry is the source for its kinds, even when a login
-      // capture is also due. Keep fetched kinds that are absent from this page.
+      // Background registration combines multiple terms. The displayed page can
+      // supply a missing kind without replacing the wider registration capture.
       final byKind = <CoursePlannerImportKind, String>{
         for (final (kind, token) in fetched) kind: token,
       };
       for (final (kind, token) in displayed) {
+        if (kind == CoursePlannerImportKind.registration &&
+            byKind.containsKey(kind)) {
+          continue;
+        }
         byKind[kind] = kind == CoursePlannerImportKind.profile
             ? reuseCoursePlannerAdmissionYear(token, byKind[kind])
             : token;
@@ -155,7 +163,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
           )) {
         return;
       }
-      final success = captured.isNotEmpty &&
+      final success = captured.isEmpty ||
           await shareDrivePlannerHandoffs(
             transport: transport,
             captured: captured,
@@ -163,25 +171,25 @@ extension _CoursePlannerActions on _GakujoWebAppState {
             capturedAt: capturedAt,
           );
       if (success && allowed()) {
-        await transport.removePlannerDuplicates();
-        if (background && allowed() && (student == null || timetable.isNotEmpty)) {
+        if (captured.isNotEmpty && (!background || complete)) {
+          await transport.removePlannerDuplicates();
+        }
+        if (background && allowed() && complete) {
           await storage.write(key: key, value: plannerTimestamp(capturedAt));
+          retryCapture = false;
           _plannerShareRetry?.cancel();
           _plannerShareRetry = null;
-        } else if (background && allowed()) {
-          _retryPlannerSharing();
         }
-      } else if (background && allowed()) {
-        _retryPlannerSharing();
       }
     } on Object catch (error) {
-      if (allowed() && error is! PlannerTimetableStudentMismatch) _retryPlannerSharing();
+      retryCapture = error is! PlannerTimetableStudentMismatch;
       developer.log(
         'Planner inquiry sharing skipped',
         name: 'MoreBetterGakujo',
       );
     } finally {
       transport?.close();
+      if (retryCapture && allowed()) _retryPlannerSharing();
       _plannerShareBusy = false;
       if (_plannerSharePending) {
         _plannerSharePending = false;

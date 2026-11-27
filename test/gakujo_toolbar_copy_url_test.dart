@@ -8,7 +8,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
-import 'package:morebettergakujo_flutter/src/generated/course_planner_fetch.g.dart';
 import 'package:morebettergakujo_flutter/src/generated/history_marker.g.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -561,7 +560,8 @@ class _Toolbar {
       if (call.method == 'loadUrl') loads.add(call.arguments as String);
       if (call.method == 'addScriptToExecuteOnDocumentCreated') return 'id';
       if (call.method != 'executeScript') return null;
-      if (fetchHandler != null && call.arguments == coursePlannerFetchJs) {
+      if (fetchHandler != null &&
+          (call.arguments as String).contains('web_scripts/src/course_planner/fetch.ts')) {
         return await fetchHandler!();
       }
       if (academicFixture &&

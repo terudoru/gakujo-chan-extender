@@ -13,6 +13,8 @@ import {
   type TimetableSnapshot,
 } from "./extract.js";
 
+declare const __mbgConfig: { attempt: string };
+
 // Reads the inquiry pages in the background so the student need not open
 // them. It only issues same-origin GET requests that start an inquiry flow,
 // plus the registration page's own semester tabs; it never submits a form,
@@ -29,7 +31,16 @@ const registrationFallback =
 const gradesFallback =
   "/campusweb/campussquare.do?_flowId=SIW0001300-flow";
 const maxPageLength = 4 * 1024 * 1024;
-const maxSemesters = 4;
+const requestTimeout = 8000;
+const captureTimeout = 60000;
+type Term = Pick<TimetableSnapshot, "year" | "semester">;
+type Target = { path: string; year?: string; semester: Term["semester"] };
+
+type CaptureBridge = {
+  take(attempt: string): string | null;
+  cancel(attempt?: string): void;
+};
+const host = window as Window & { __mbgPlannerFetch?: CaptureBridge };
 
 function servlet(url: URL) {
   return /^\/campusweb\/campussquare\.do(?:;jsessionid=[^/;]*)?$/i.test(
@@ -61,24 +72,26 @@ function inquiryUrl(raw: string, base: string) {
   return { path: url.pathname + url.search, flow: flows[0] };
 }
 /** The registration page's semester tab, as calendar_registration_page_fetch reads it. */
-function semesterUrl(raw: string, base: string) {
+function semesterTarget(raw: string, base: string, year?: string): Target | null {
   const clean = raw.trim().replace(/&amp;/g, "&");
   const url = parse(clean, base);
   const params = url?.searchParams;
+  const semester = params?.get("gakkiKbnCode");
   if (
     !url || !params ||
     !Array.from(params.keys()).every((k) =>
       /^(_flowExecutionKey|_flowId|_eventId|gakkiKbnCode|nendo|locale)$/.test(k) && params.getAll(k).length === 1,
     ) ||
     params.get("_eventId") !== "search" ||
-    !/^[0-9]+$/.test(params.get("gakkiKbnCode") || "") ||
+    (semester !== "1" && semester !== "2") ||
     (params.has("nendo") && !/^(19|20)\d{2}$/.test(params.get("nendo") || "")) ||
     (params.has("_flowId") && params.get("_flowId") !== "RSW0001000-flow") ||
     (params.has("_flowExecutionKey") && !/^e\d+s\d+$/.test(params.get("_flowExecutionKey") || "")) ||
     (!params.has("_flowId") && !params.has("_flowExecutionKey"))
   )
     return null;
-  return url.pathname + url.search;
+  return {path: url.pathname + url.search, year: params.get("nendo") || year,
+    semester: semester === "1" ? "first" : "second"};
 }
 
 function frameDocuments(doc: Document, found: Document[], depth = 0) {
@@ -141,23 +154,34 @@ function discover(docs: Document[], title: string) {
 
 const sessionExpired = new Error("session-expired");
 
-function get(path: string): { doc: Document; href: string } | null {
+async function get(path: string, signal: AbortSignal, deadline: number) {
+  const remaining = deadline - Date.now();
+  if (signal.aborted || remaining <= 0) return null;
   const xhr = new XMLHttpRequest();
-  xhr.open("GET", path, false);
-  try { xhr.send(null); } catch { return null; }
-  if (xhr.status < 200 || xhr.status >= 300) return null;
-  if (xhr.responseText.length > maxPageLength) return null;
+  const abort = () => xhr.abort();
+  const loaded = await new Promise<boolean>((resolve) => {
+    xhr.open("GET", path);
+    xhr.timeout = Math.min(remaining, requestTimeout);
+    xhr.onload = () => resolve(true);
+    xhr.onerror = xhr.ontimeout = xhr.onabort = () => resolve(false);
+    signal.addEventListener("abort", abort, {once:true});
+    try { xhr.send(); } catch { resolve(false); }
+  }).finally(() => signal.removeEventListener("abort", abort));
+  if (!loaded || xhr.status < 200 || xhr.status >= 300 || xhr.responseText.length > maxPageLength)
+    return null;
+  const href = xhr.responseURL || new URL(path, location.href).href;
+  if (new URL(href).origin !== origin) throw sessionExpired;
   const doc = new DOMParser().parseFromString(xhr.responseText, "text/html");
   // A sign-in form in any fetched page means the session has ended: abort all.
   if (doc.querySelector('input[type="password"],input[name="ninshoCode"]'))
     throw sessionExpired;
-  const href = xhr.responseURL || new URL(path, location.href).href;
-  if (!parse(href, location.href)) return null;
-  return { doc, href };
+  return parse(href, location.href) ? {doc, href} : null;
 }
 
-function fetchInquiries() {
-  if (window !== window.top || location.origin !== origin) return null;
+const termKey = ({year, semester}: Pick<Target, "year" | "semester">) =>
+  (year ?? "") + "/" + semester;
+
+async function fetchInquiries(signal: AbortSignal) {
   const docs: Document[] = [];
   frameDocuments(document, docs);
   if (
@@ -169,23 +193,51 @@ function fetchInquiries() {
     )
   )
     return null;
+  const deadline = Date.now() + captureTimeout;
+  const read = (path: string) => get(path, signal, deadline);
   const pages: Page[] = [];
-  const grades = discover(docs, names.grades) || gradesFallback;
-  if (grades) {
-    const page = get(grades);
-    if (page) pages.push({ source: "grades", ...page });
-  }
-  const first = get(discover(docs, names.registration) || registrationFallback);
-  if (first) {
-    pages.push({ source: "registration", ...first });
-    const seen = new Set<string>();
-    for (const link of Array.from(first.doc.querySelectorAll("a[href]"))) {
-      const path = semesterUrl(link.getAttribute("href") || "", first.href);
-      if (!path || seen.has(path) || seen.size >= maxSemesters) continue;
-      seen.add(path);
-      const page = get(path);
-      if (page) pages.push({ source: "registration", ...page });
+  const grades = await read(discover(docs, names.grades) || gradesFallback);
+  if (grades) pages.push({ source: "grades", ...grades });
+  // Read affiliation before entering the registration flow, whose links can share a flow key.
+  const studentPath = discover(docs, studentInquiryName);
+  const studentPage = studentPath ? await read(studentPath) : null;
+  const first = await read(discover(docs, names.registration) || registrationFallback);
+  const pending = new Map<string, Target>();
+  const confirmed = new Set<string>();
+  const attempted = new Map<string, Set<string>>();
+  const unresolved = new Set<string>();
+  function includeRegistration(page: Omit<Page, "source">, target?: Target) {
+    const {registrationTerm, pageKinds} = extractor(staticView(page.href));
+    const term = registrationTerm(page.doc);
+    if (target && (!term || term.semester !== target.semester || (target.year && term.year !== target.year))) return false;
+    if (!term && !pageKinds(page.doc).includes("registration")) return false;
+    pages.push({ source: "registration", ...page });
+    if (term) {
+      const key = termKey(term);
+      confirmed.add(key);
+      unresolved.delete(key);
+      pending.delete(key);
     }
+    for (const link of Array.from(page.doc.querySelectorAll("a[href]"))) {
+      const next = semesterTarget(link.getAttribute("href") || "", page.href, term?.year);
+      if (!next) continue;
+      const key = termKey(next);
+      const seen = attempted.get(key);
+      if (confirmed.has(key) || seen?.has(next.path) || (seen && seen.size >= 2)) continue;
+      pending.set(key, next);
+    }
+    return true;
+  }
+  const rootRead = first && includeRegistration(first);
+  for (const [key, next] of pending) {
+    if (signal.aborted || Date.now() >= deadline) break;
+    pending.delete(key);
+    const seen = attempted.get(key) ?? new Set<string>();
+    seen.add(next.path);
+    attempted.set(key, seen);
+    const page = await read(next.path);
+    if (page && includeRegistration(page, next)) unresolved.delete(key);
+    else unresolved.add(key);
   }
 
   const packets: Partial<Record<Kind, Packet>> = {};
@@ -230,7 +282,8 @@ function fetchInquiries() {
       else yearless = true;
     }
   }
-  if (registration.length && withinBounds(registration))
+  const registrationFits = !registration.length || withinBounds(registration);
+  if (registration.length && registrationFits)
     packets.registration = {
       v: 1,
       kind: "registration",
@@ -239,8 +292,6 @@ function fetchInquiries() {
     };
   // Read the student inquiry only when the portal advertises the read-only flow.
   // The official admission-year fact can be separate from the affiliation table.
-  const studentPath = discover(docs, studentInquiryName);
-  const studentPage = studentPath ? get(studentPath) : null;
   if (studentPage) {
     const read = extractor(staticView(studentPage.href));
     const student = read.packet(studentPage.doc, "profile");
@@ -254,14 +305,39 @@ function fetchInquiries() {
   }
   const ordered: Partial<Record<Kind, Packet>> = {};
   for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
-  return { v: 1, packets: ordered, timetable:[...timetable.values()].filter(value => value !== null) };
+  const gradePageRead = grades && extractor(staticView(grades.href)).pageKinds(grades.doc).includes("grades");
+  const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) &&
+    registrationFits && pending.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
+  return {v:1, packets:ordered, timetable:[...timetable.values()].filter(value => value !== null), complete};
 }
 
-function run() {
-  try {
-    return fetchInquiries();
-  } catch {
-    return null;
-  }
+function start() {
+  if (window !== window.top || location.origin !== origin) return null;
+  const {attempt} = __mbgConfig;
+  host.__mbgPlannerFetch?.cancel();
+  const controller = new AbortController();
+  let result = "pending";
+  const cancel = (owner?: string) => {
+    if (owner !== undefined && owner !== attempt) return;
+    delete host.__mbgPlannerFetch;
+    controller.abort();
+    window.removeEventListener("pagehide", leave);
+  };
+  const leave = () => cancel();
+  window.addEventListener("pagehide", leave, {once:true});
+  host.__mbgPlannerFetch = {
+    take(owner) {
+      if (owner !== attempt) return null;
+      if (result !== "pending") cancel(attempt);
+      return result;
+    },
+    cancel,
+  };
+  void fetchInquiries(controller.signal).then(
+    (capture) => { result = JSON.stringify(capture); },
+    () => { result = "null"; },
+  );
+  return result;
 }
-__mbgEntryResult = JSON.stringify(run());
+
+__mbgEntryResult = start();

@@ -89,17 +89,44 @@ Future<List<(CoursePlannerImportKind, String)>> fetchCoursePlannerHandoffs(
   bool Function() stillCurrent,
 ) async => (await fetchCoursePlannerCapture(controller, stillCurrent)).$1;
 
-Future<(List<(CoursePlannerImportKind, String)>, List<Object?>)>
+const _emptyCoursePlannerCapture = (
+  <(CoursePlannerImportKind, String)>[],
+  <Object?>[],
+  false,
+);
+
+Future<(List<(CoursePlannerImportKind, String)>, List<Object?>, bool)>
 fetchCoursePlannerCapture(
   GakujoWebViewController controller,
   bool Function() stillCurrent,
 ) async {
-  if (!stillCurrent()) return (const <(CoursePlannerImportKind, String)>[], const <Object?>[]);
-  final result = await controller.runJavaScriptReturningResult(
-    coursePlannerFetchJs,
-  );
-  if (!stillCurrent()) return (const <(CoursePlannerImportKind, String)>[], const <Object?>[]);
-  return _decodeCoursePlannerCapture(result);
+  if (!stillCurrent()) return _emptyCoursePlannerCapture;
+  final attempt = _attempt();
+  final owner = jsonEncode(attempt);
+  final time = Stopwatch()..start();
+  Future<Object?> evaluate(String script) => controller
+      .runJavaScriptReturningResult(script)
+      .timeout(const Duration(seconds: 5));
+  try {
+    var result = await evaluate(coursePlannerFetchJs({'attempt': attempt}));
+    while (stillCurrent() && (result == 'pending' || result == '"pending"')) {
+      if (time.elapsed >= const Duration(seconds: 65)) {
+        return _emptyCoursePlannerCapture;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!stillCurrent()) return _emptyCoursePlannerCapture;
+      result = await evaluate('window.__mbgPlannerFetch?.take($owner) ?? null');
+    }
+    return stillCurrent()
+        ? _decodeCoursePlannerCapture(result)
+        : _emptyCoursePlannerCapture;
+  } finally {
+    try {
+      await evaluate('window.__mbgPlannerFetch?.cancel($owner) ?? null');
+    } on Object {
+      // A replaced WebView already discarded its document-owned capture.
+    }
+  }
 }
 
 /// Adds any kinds offered by the displayed page that [fetched] lacks, keeping
@@ -149,7 +176,7 @@ List<(CoursePlannerImportKind, String)> decodeCoursePlannerFetch(
   Object? result,
 ) => _decodeCoursePlannerCapture(result).$1;
 
-(List<(CoursePlannerImportKind, String)>, List<Object?>)
+(List<(CoursePlannerImportKind, String)>, List<Object?>, bool)
 _decodeCoursePlannerCapture(Object? result) {
   final Object? data;
   try {
@@ -157,10 +184,10 @@ _decodeCoursePlannerCapture(Object? result) {
     data = text == null ? null : jsonDecode(text);
   } on Object {
     // An unreadable reply offers nothing to copy.
-    return (const [], const []);
+    return _emptyCoursePlannerCapture;
   }
   if (data is! Map<String, dynamic> || data['v'] != 1) {
-    return (const [], const []);
+    return _emptyCoursePlannerCapture;
   }
   final packets = data['packets'];
   final timetable = data['timetable'];
@@ -171,7 +198,10 @@ _decodeCoursePlannerCapture(Object? result) {
           if (encodeCoursePlannerHandoff(packets[kind.name], kind) case final token?)
             (kind, token),
     ],
-    timetable is List && timetable.length <= 60 ? timetable.cast<Object?>() : const [],
+    timetable is List && timetable.length <= 60
+        ? timetable.cast<Object?>()
+        : const [],
+    data['complete'] == true && timetable is List && timetable.length <= 60,
   );
 }
 

@@ -417,7 +417,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
         }) : tables
       }, year ? { year } : {});
     }
-    return { visible: visible2, pageKinds: pageKinds2, academicTables: academicTables2, profile, admissionYear, packet: packet2, timetableSnapshot: timetableSnapshot2 };
+    return { visible: visible2, pageKinds: pageKinds2, academicTables: academicTables2, profile, admissionYear, packet: packet2, registrationTerm, timetableSnapshot: timetableSnapshot2 };
   }
   function withinBounds(tables) {
     return tables.length > 0 && tables.length <= 50 && tables.reduce((n, t) => n + t.rows.length, 0) <= 6e3;

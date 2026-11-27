@@ -2,8 +2,14 @@
 // Source: web_scripts/src/course_planner/fetch.ts
 // Regenerate with: npm --prefix web_scripts run build
 
-const String coursePlannerFetchJs = r'''
-(function() {
+import 'dart:convert';
+
+String coursePlannerFetchJs(Map<String, Object?> config) =>
+    _coursePlannerFetchJsPrefix +
+    jsonEncode(config) +
+    _coursePlannerFetchJsSuffix;
+
+const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
@@ -461,7 +467,7 @@ const String coursePlannerFetchJs = r'''
         }) : tables
       }, year ? { year } : {});
     }
-    return { visible, pageKinds, academicTables, profile, admissionYear, packet, timetableSnapshot };
+    return { visible, pageKinds, academicTables, profile, admissionYear, packet, registrationTerm, timetableSnapshot };
   }
   function withinBounds(tables) {
     return tables.length > 0 && tables.length <= 50 && tables.reduce((n, t) => n + t.rows.length, 0) <= 6e3;
@@ -472,7 +478,9 @@ const String coursePlannerFetchJs = r'''
   var registrationFallback = "/campusweb/campussquare.do?_flowId=RSW0001000-flow";
   var gradesFallback = "/campusweb/campussquare.do?_flowId=SIW0001300-flow";
   var maxPageLength = 4 * 1024 * 1024;
-  var maxSemesters = 4;
+  var requestTimeout = 8e3;
+  var captureTimeout = 6e4;
+  var host = window;
   function servlet(url) {
     return /^\/campusweb\/campussquare\.do(?:;jsessionid=[^/;]*)?$/i.test(
       url.pathname
@@ -495,15 +503,20 @@ const String coursePlannerFetchJs = r'''
       return null;
     return { path: url.pathname + url.search, flow: flows[0] };
   }
-  function semesterUrl(raw, base) {
+  function semesterTarget(raw, base, year) {
     const clean = raw.trim().replace(/&amp;/g, "&");
     const url = parse(clean, base);
     const params = url == null ? void 0 : url.searchParams;
+    const semester = params == null ? void 0 : params.get("gakkiKbnCode");
     if (!url || !params || !Array.from(params.keys()).every(
       (k) => /^(_flowExecutionKey|_flowId|_eventId|gakkiKbnCode|nendo|locale)$/.test(k) && params.getAll(k).length === 1
-    ) || params.get("_eventId") !== "search" || !/^[0-9]+$/.test(params.get("gakkiKbnCode") || "") || params.has("nendo") && !/^(19|20)\d{2}$/.test(params.get("nendo") || "") || params.has("_flowId") && params.get("_flowId") !== "RSW0001000-flow" || params.has("_flowExecutionKey") && !/^e\d+s\d+$/.test(params.get("_flowExecutionKey") || "") || !params.has("_flowId") && !params.has("_flowExecutionKey"))
+    ) || params.get("_eventId") !== "search" || semester !== "1" && semester !== "2" || params.has("nendo") && !/^(19|20)\d{2}$/.test(params.get("nendo") || "") || params.has("_flowId") && params.get("_flowId") !== "RSW0001000-flow" || params.has("_flowExecutionKey") && !/^e\d+s\d+$/.test(params.get("_flowExecutionKey") || "") || !params.has("_flowId") && !params.has("_flowExecutionKey"))
       return null;
-    return url.pathname + url.search;
+    return {
+      path: url.pathname + url.search,
+      year: params.get("nendo") || year,
+      semester: semester === "1" ? "first" : "second"
+    };
   }
   function frameDocuments(doc, found, depth = 0) {
     let url;
@@ -558,25 +571,35 @@ const String coursePlannerFetchJs = r'''
     return flows.size === 1 ? found : null;
   }
   var sessionExpired = new Error("session-expired");
-  function get(path) {
+  async function get(path, signal, deadline) {
+    const remaining = deadline - Date.now();
+    if (signal.aborted || remaining <= 0) return null;
     const xhr = new XMLHttpRequest();
-    xhr.open("GET", path, false);
-    try {
-      xhr.send(null);
-    } catch (e) {
+    const abort = () => xhr.abort();
+    const loaded = await new Promise((resolve) => {
+      xhr.open("GET", path);
+      xhr.timeout = Math.min(remaining, requestTimeout);
+      xhr.onload = () => resolve(true);
+      xhr.onerror = xhr.ontimeout = xhr.onabort = () => resolve(false);
+      signal.addEventListener("abort", abort, { once: true });
+      try {
+        xhr.send();
+      } catch (e) {
+        resolve(false);
+      }
+    }).finally(() => signal.removeEventListener("abort", abort));
+    if (!loaded || xhr.status < 200 || xhr.status >= 300 || xhr.responseText.length > maxPageLength)
       return null;
-    }
-    if (xhr.status < 200 || xhr.status >= 300) return null;
-    if (xhr.responseText.length > maxPageLength) return null;
+    const href = xhr.responseURL || new URL(path, location.href).href;
+    if (new URL(href).origin !== origin) throw sessionExpired;
     const doc = new DOMParser().parseFromString(xhr.responseText, "text/html");
     if (doc.querySelector('input[type="password"],input[name="ninshoCode"]'))
       throw sessionExpired;
-    const href = xhr.responseURL || new URL(path, location.href).href;
-    if (!parse(href, location.href)) return null;
-    return { doc, href };
+    return parse(href, location.href) ? { doc, href } : null;
   }
-  function fetchInquiries() {
-    if (window !== window.top || location.origin !== origin) return null;
+  var termKey = ({ year, semester }) => (year != null ? year : "") + "/" + semester;
+  async function fetchInquiries(signal) {
+    var _a;
     const docs = [];
     frameDocuments(document, docs);
     if (!docs.length || docs.some(
@@ -585,23 +608,50 @@ const String coursePlannerFetchJs = r'''
       ).some((el) => liveView.visible(el))
     ))
       return null;
+    const deadline = Date.now() + captureTimeout;
+    const read = (path) => get(path, signal, deadline);
     const pages = [];
-    const grades = discover(docs, names.grades) || gradesFallback;
-    if (grades) {
-      const page = get(grades);
-      if (page) pages.push(__spreadValues({ source: "grades" }, page));
-    }
-    const first = get(discover(docs, names.registration) || registrationFallback);
-    if (first) {
-      pages.push(__spreadValues({ source: "registration" }, first));
-      const seen = /* @__PURE__ */ new Set();
-      for (const link of Array.from(first.doc.querySelectorAll("a[href]"))) {
-        const path = semesterUrl(link.getAttribute("href") || "", first.href);
-        if (!path || seen.has(path) || seen.size >= maxSemesters) continue;
-        seen.add(path);
-        const page = get(path);
-        if (page) pages.push(__spreadValues({ source: "registration" }, page));
+    const grades = await read(discover(docs, names.grades) || gradesFallback);
+    if (grades) pages.push(__spreadValues({ source: "grades" }, grades));
+    const studentPath = discover(docs, studentInquiryName);
+    const studentPage = studentPath ? await read(studentPath) : null;
+    const first = await read(discover(docs, names.registration) || registrationFallback);
+    const pending = /* @__PURE__ */ new Map();
+    const confirmed = /* @__PURE__ */ new Set();
+    const attempted = /* @__PURE__ */ new Map();
+    const unresolved = /* @__PURE__ */ new Set();
+    function includeRegistration(page, target) {
+      const { registrationTerm, pageKinds } = extractor(staticView(page.href));
+      const term = registrationTerm(page.doc);
+      if (target && (!term || term.semester !== target.semester || target.year && term.year !== target.year)) return false;
+      if (!term && !pageKinds(page.doc).includes("registration")) return false;
+      pages.push(__spreadValues({ source: "registration" }, page));
+      if (term) {
+        const key = termKey(term);
+        confirmed.add(key);
+        unresolved.delete(key);
+        pending.delete(key);
       }
+      for (const link of Array.from(page.doc.querySelectorAll("a[href]"))) {
+        const next = semesterTarget(link.getAttribute("href") || "", page.href, term == null ? void 0 : term.year);
+        if (!next) continue;
+        const key = termKey(next);
+        const seen = attempted.get(key);
+        if (confirmed.has(key) || (seen == null ? void 0 : seen.has(next.path)) || seen && seen.size >= 2) continue;
+        pending.set(key, next);
+      }
+      return true;
+    }
+    const rootRead = first && includeRegistration(first);
+    for (const [key, next] of pending) {
+      if (signal.aborted || Date.now() >= deadline) break;
+      pending.delete(key);
+      const seen = (_a = attempted.get(key)) != null ? _a : /* @__PURE__ */ new Set();
+      seen.add(next.path);
+      attempted.set(key, seen);
+      const page = await read(next.path);
+      if (page && includeRegistration(page, next)) unresolved.delete(key);
+      else unresolved.add(key);
     }
     const packets = {};
     const registration = [];
@@ -641,39 +691,67 @@ const String coursePlannerFetchJs = r'''
         else yearless = true;
       }
     }
-    if (registration.length && withinBounds(registration))
+    const registrationFits = !registration.length || withinBounds(registration);
+    if (registration.length && registrationFits)
       packets.registration = __spreadValues({
         v: 1,
         kind: "registration",
         tables: registration
       }, years.size === 1 && !yearless ? { year: Array.from(years)[0] } : {});
-    const studentPath = discover(docs, studentInquiryName);
-    const studentPage = studentPath ? get(studentPath) : null;
     if (studentPage) {
-      const read = extractor(staticView(studentPage.href));
-      const student = read.packet(studentPage.doc, "profile");
+      const read2 = extractor(staticView(studentPage.href));
+      const student = read2.packet(studentPage.doc, "profile");
       const previous = packets.profile;
       const profile = student || previous;
-      const year = read.admissionYear(studentPage.doc);
+      const year = read2.admissionYear(studentPage.doc);
       if (profile) {
-        const _a = profile, { year: oldYear } = _a, base = __objRest(_a, ["year"]);
+        const _b = profile, { year: oldYear } = _b, base = __objRest(_b, ["year"]);
         packets.profile = year ? __spreadProps(__spreadValues({}, base), { year }) : base;
       }
     }
     const ordered = {};
     for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
-    return { v: 1, packets: ordered, timetable: [...timetable.values()].filter((value) => value !== null) };
+    const gradePageRead = grades && extractor(staticView(grades.href)).pageKinds(grades.doc).includes("grades");
+    const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) && registrationFits && pending.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
+    return { v: 1, packets: ordered, timetable: [...timetable.values()].filter((value) => value !== null), complete };
   }
-  function run() {
-    try {
-      return fetchInquiries();
-    } catch (e) {
-      return null;
-    }
+  function start() {
+    var _a;
+    if (window !== window.top || location.origin !== origin) return null;
+    const { attempt } = __mbgConfig;
+    (_a = host.__mbgPlannerFetch) == null ? void 0 : _a.cancel();
+    const controller = new AbortController();
+    let result = "pending";
+    const cancel = (owner) => {
+      if (owner !== void 0 && owner !== attempt) return;
+      delete host.__mbgPlannerFetch;
+      controller.abort();
+      window.removeEventListener("pagehide", leave);
+    };
+    const leave = () => cancel();
+    window.addEventListener("pagehide", leave, { once: true });
+    host.__mbgPlannerFetch = {
+      take(owner) {
+        if (owner !== attempt) return null;
+        if (result !== "pending") cancel(attempt);
+        return result;
+      },
+      cancel
+    };
+    void fetchInquiries(controller.signal).then(
+      (capture) => {
+        result = JSON.stringify(capture);
+      },
+      () => {
+        result = "null";
+      }
+    );
+    return result;
   }
-  __mbgEntryResult = JSON.stringify(run());
+  __mbgEntryResult = start();
 })();
 var __mbgEntryResult;
 return __mbgEntryResult;
-})()
+})(''';
+const String _coursePlannerFetchJsSuffix = r''')
 ''';
