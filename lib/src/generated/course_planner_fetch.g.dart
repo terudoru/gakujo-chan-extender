@@ -480,6 +480,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
   var maxPageLength = 4 * 1024 * 1024;
   var requestTimeout = 8e3;
   var captureTimeout = 6e4;
+  var balancePdfLimit = 2 * 1024 * 1024;
   var host = window;
   function servlet(url) {
     return /^\/campusweb\/campussquare\.do(?:;jsessionid=[^/;]*)?$/i.test(
@@ -571,6 +572,67 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
     return flows.size === 1 ? found : null;
   }
   var sessionExpired = new Error("session-expired");
+  function advertisedBalancePdf(page) {
+    const candidates = /* @__PURE__ */ new Set();
+    const { visible } = staticView(page.href);
+    for (const link of Array.from(page.doc.querySelectorAll("a[href]"))) {
+      if (!visible(link)) continue;
+      const namesOnLink = [
+        link.textContent,
+        link.title,
+        link.getAttribute("aria-label"),
+        ...Array.from(link.querySelectorAll("img[alt]"), (icon) => icon.getAttribute("alt"))
+      ];
+      if (!namesOnLink.some((value) => normalized(value).replace(/\s/g, "") === names.balances)) continue;
+      const href = link.getAttribute("href") || "";
+      try {
+        const url = new URL(href, page.href);
+        if (url.origin === origin && !url.username && !url.password && (/^\/campusweb\/.*\.pdf$/i.test(url.pathname) || servlet(url) && link.type.toLowerCase() === "application/pdf"))
+          candidates.add(url.origin + url.pathname + url.search);
+      } catch (e) {
+      }
+    }
+    return candidates.size === 1 ? candidates.values().next().value : void 0;
+  }
+  async function readBalancePdf(url, signal, deadline) {
+    var _a, _b;
+    const remaining = deadline - Date.now();
+    if (signal.aborted || remaining <= 0) return null;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(abort, Math.min(remaining, requestTimeout));
+    try {
+      const response = await fetch(url, { credentials: "same-origin", redirect: "error", signal: controller.signal });
+      if (!response.ok || ((_b = (_a = response.headers.get("Content-Type")) == null ? void 0 : _a.split(";")[0]) == null ? void 0 : _b.trim().toLowerCase()) !== "application/pdf" || Number(response.headers.get("Content-Length")) > balancePdfLimit || !response.body) return null;
+      const reader = response.body.getReader();
+      let length = 0;
+      const chunks = [];
+      for (; ; ) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if ((length += value.length) > balancePdfLimit) return null;
+        chunks.push(value);
+      }
+      const bytes = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      if (String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-") return null;
+      let binary = "";
+      for (let start2 = 0; start2 < length; start2 += 16384)
+        binary += String.fromCharCode(...bytes.subarray(start2, start2 + 16384));
+      return btoa(binary);
+    } catch (e) {
+      return null;
+    } finally {
+      abort();
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+    }
+  }
   async function get(path, signal, deadline) {
     const remaining = deadline - Date.now();
     if (signal.aborted || remaining <= 0) return null;
@@ -643,6 +705,8 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
       return true;
     }
     const rootRead = first && includeRegistration(first);
+    const balanceUrl = first && rootRead ? advertisedBalancePdf(first) : void 0;
+    const balancePdf = balanceUrl ? await readBalancePdf(balanceUrl, signal, deadline) : null;
     for (const [key, next] of pending) {
       if (signal.aborted || Date.now() >= deadline) break;
       pending.delete(key);
@@ -712,8 +776,13 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
     const ordered = {};
     for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
     const gradePageRead = grades && extractor(staticView(grades.href)).pageKinds(grades.doc).includes("grades");
-    const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) && registrationFits && pending.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
-    return { v: 1, packets: ordered, timetable: [...timetable.values()].filter((value) => value !== null), complete };
+    const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) && (!balanceUrl || !!balancePdf) && registrationFits && pending.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
+    return __spreadValues({
+      v: 1,
+      packets: ordered,
+      timetable: [...timetable.values()].filter((value) => value !== null),
+      complete
+    }, balancePdf && { balancePdf });
   }
   function start() {
     var _a;
@@ -741,6 +810,10 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
     void fetchInquiries(controller.signal).then(
       (capture) => {
         result = JSON.stringify(capture);
+        if ((capture == null ? void 0 : capture.balancePdf) && result.length > 7 * 1024 * 1024) {
+          const _a2 = capture, { balancePdf } = _a2, inquiries = __objRest(_a2, ["balancePdf"]);
+          result = JSON.stringify(__spreadProps(__spreadValues({}, inquiries), { complete: false }));
+        }
       },
       () => {
         result = "null";

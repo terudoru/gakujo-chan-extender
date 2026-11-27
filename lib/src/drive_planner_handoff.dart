@@ -117,6 +117,11 @@ Future<bool> shareDrivePlannerHandoffs({
         next = combined;
       } else if (kind == CoursePlannerImportKind.profile) {
         next = reuseCoursePlannerAdmissionYear(newer, older);
+      } else if (kind == CoursePlannerImportKind.balances &&
+          hasCoursePlannerSplitBalances(prior) &&
+          !hasCoursePlannerSplitBalances(token)) {
+        // A later summary page can lack the report's earned-credit columns.
+        next = prior;
       } else {
         next = newer;
       }

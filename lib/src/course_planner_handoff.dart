@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math';
 
+import 'course_planner_balance_pdf.dart';
 import 'generated/course_planner_capture.g.dart';
 import 'generated/course_planner_fetch.g.dart';
 import 'web_view_service.dart';
@@ -117,9 +119,22 @@ fetchCoursePlannerCapture(
       if (!stillCurrent()) return _emptyCoursePlannerCapture;
       result = await evaluate('window.__mbgPlannerFetch?.take($owner) ?? null');
     }
-    return stillCurrent()
-        ? _decodeCoursePlannerCapture(result)
-        : _emptyCoursePlannerCapture;
+    if (!stillCurrent()) return _emptyCoursePlannerCapture;
+    final capture = _parseCoursePlannerCapture(result);
+    if (capture == null) return _emptyCoursePlannerCapture;
+    if (capture['balancePdf'] case final String pdf) {
+      final projected = await _captureBalancePdf(pdf);
+      if (!stillCurrent()) return _emptyCoursePlannerCapture;
+      if (projected == null) {
+        capture['complete'] = false;
+      } else {
+        capture['packets'] = {
+          if (capture['packets'] case final Map<String, dynamic> packets) ...packets,
+          'balances': projected,
+        };
+      }
+    }
+    return _decodeCoursePlannerCapture(capture);
   } finally {
     try {
       await evaluate('window.__mbgPlannerFetch?.cancel($owner) ?? null');
@@ -174,21 +189,31 @@ Future<List<(CoursePlannerImportKind, String)>> supplementCoursePlannerHandoffs(
 /// One MBGPLAN1 token per kind found, in [coursePlannerHandoffOrder].
 List<(CoursePlannerImportKind, String)> decodeCoursePlannerFetch(
   Object? result,
-) => _decodeCoursePlannerCapture(result).$1;
+) => _decodeCoursePlannerCapture(_parseCoursePlannerCapture(result)).$1;
 
-(List<(CoursePlannerImportKind, String)>, List<Object?>, bool)
-_decodeCoursePlannerCapture(Object? result) {
-  final Object? data;
+Map<String, dynamic>? _parseCoursePlannerCapture(Object? result) {
   try {
     final text = _bridgeString(result, limit: 8 * 1024 * 1024);
-    data = text == null ? null : jsonDecode(text);
+    final data = text == null ? null : jsonDecode(text);
+    return data is Map<String, dynamic> && data['v'] == 1 ? data : null;
   } on Object {
-    // An unreadable reply offers nothing to copy.
-    return _emptyCoursePlannerCapture;
+    return null;
   }
-  if (data is! Map<String, dynamic> || data['v'] != 1) {
-    return _emptyCoursePlannerCapture;
+}
+
+Future<Map<String, dynamic>?> _captureBalancePdf(String pdf) async {
+  if (pdf.length > ((coursePlannerBalancePdfLimit + 2) ~/ 3) * 4) return null;
+  try {
+    return await Isolate.run(() => readCoursePlannerBalancePdf(base64Decode(pdf)));
+  } on Object {
+    // An unrecognized report must leave the other successful inquiries available.
+    return null;
   }
+}
+
+(List<(CoursePlannerImportKind, String)>, List<Object?>, bool)
+_decodeCoursePlannerCapture(Map<String, dynamic>? data) {
+  if (data == null) return _emptyCoursePlannerCapture;
   final packets = data['packets'];
   final timetable = data['timetable'];
   return (
@@ -269,7 +294,7 @@ Map<String, dynamic>? _validateCoursePlannerPacket(
     ),
     CoursePlannerImportKind.balances => (
       const {'履修科目確認表'},
-      const {'科目区分', '既修得単位数'},
+      const {'科目区分', '既修得単位数', '既修得単位(昼間)', '既修得単位(夜間)'},
     ),
     CoursePlannerImportKind.profile => (const {'学生所属'}, const {'所属', '学年'}),
   };
@@ -286,6 +311,13 @@ Map<String, dynamic>? _validateCoursePlannerPacket(
         !headers.every(columns.contains) ||
         headers.length != headers.toSet().length) {
       return null;
+    }
+    if (kind == CoursePlannerImportKind.balances) {
+      final split = headers.contains('既修得単位(昼間)');
+      if (split != headers.contains('既修得単位(夜間)') ||
+          split && (headers.contains('既修得単位数') || !headers.contains('科目区分'))) {
+        return null;
+      }
     }
     for (final row in rows.skip(1)) {
       if (row is! List ||
@@ -361,6 +393,13 @@ Map<String, dynamic>? _decodeCoursePlannerToken(
 
 bool validCoursePlannerToken(String token, CoursePlannerImportKind kind) =>
     _decodeCoursePlannerToken(token, kind) != null;
+
+bool hasCoursePlannerSplitBalances(String token) {
+  final packet = _decodeCoursePlannerToken(token, CoursePlannerImportKind.balances);
+  return packet != null &&
+      (packet['tables'] as List).any((table) =>
+        (table['rows'].first as List).contains('既修得単位(昼間)'));
+}
 
 /// Keep the printed admission year if the caller verified both sources belong
 /// to the same student and their affiliations match exactly.

@@ -2,12 +2,68 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:morebettergakujo_flutter/src/course_planner_balance_pdf.dart';
+import 'package:morebettergakujo_flutter/src/course_planner_handoff.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar_resolver.dart';
+import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 import 'package:pdf_cos/pdf_cos.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('the credit PDF projects only the official earned-credit columns', () async {
+    String cell(String text, int x, int y) =>
+        'BT 1 0 0 1 $x $y Tm /CID 11 Tf <${text.codeUnits.map(_hex).join()}> Tj ET';
+    final contents = [
+      cell('履修科目確認表', 250, 780),
+      cell('区分', 336, 752),
+      cell('履修単位', 423, 752),
+      cell('既修得単位', 497, 752),
+      cell('昼間', 414, 736),
+      cell('夜間', 454, 736),
+      cell('昼間', 494, 736),
+      cell('夜間', 534, 736),
+      cell('別表の科目名', 84, 715),
+      cell('大学独自の区分', 292, 715),
+      cell('90', 414, 715),
+      cell('88', 454, 715),
+      cell('４．５', 489, 715),
+      cell('1.5', 529, 715),
+      cell('認定分', 292, 697),
+      cell('77', 414, 697),
+      cell('＊2.5', 523, 697),
+      cell('学生氏名', 292, 677),
+      cell('99', 494, 677),
+    ];
+    final bytes = _calendarPdf([contents.join('\n')]);
+    final report = readCoursePlannerBalancePdf(bytes);
+    expect(report, {
+      'v': 1, 'kind': 'balances',
+      'tables': [
+        {'heading': '履修科目確認表', 'rows': [
+          ['科目区分', '既修得単位(昼間)', '既修得単位(夜間)'],
+          ['大学独自の区分', '4.5', '1.5'],
+          ['認定分', '', '*2.5'],
+        ]},
+      ],
+    });
+    const kind = CoursePlannerImportKind.balances;
+    final token = encodeCoursePlannerHandoff(report, kind)!;
+    expect(hasCoursePlannerSplitBalances(token), isTrue);
+    final (packets, _, complete) = await fetchCoursePlannerCapture(
+      _ReportView(jsonEncode({
+        'v': 1, 'packets': <String, dynamic>{}, 'timetable': [],
+        'complete': true, 'balancePdf': base64Encode(bytes),
+      })),
+      () => true,
+    );
+    expect(packets, [(kind, token)]);
+    expect(complete, isTrue);
+    expect(readCoursePlannerBalancePdf(_calendarPdf([contents.skip(1).join('\n')])), isNull);
+    final wrongGroup = [...contents]..[3] = cell('他の単位数', 497, 752);
+    expect(readCoursePlannerBalancePdf(_calendarPdf([wrongGroup.join('\n')])), isNull);
+  });
+
   final exceedsLimits = isA<FormatException>().having(
     (error) => error.message,
     'message',
@@ -358,6 +414,18 @@ void main() {
     expect(merged.noClassDates, contains(DateTime(2026, 7, 30)));
     expect(merged.noClassDates, contains(DateTime(2026, 8, 5)));
   });
+}
+
+class _ReportView implements GakujoWebViewController {
+  const _ReportView(this.response);
+  final String response;
+
+  @override
+  Future<Object?> runJavaScriptReturningResult(String script) async =>
+      script.startsWith('window.__mbgPlannerFetch?.cancel(') ? null : response;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 List<GakujoAcademicTerm> _parsePdf(Uint8List bytes, {int academicYear = 2026}) {

@@ -167,6 +167,26 @@ void main() {
     expect(drive.bytes, fixture);
   });
 
+  test('a flat inquiry cannot discard a previously captured split credit report', () async {
+    const kind = CoursePlannerImportKind.balances;
+    final split = encodeCoursePlannerHandoff({
+      'v': 1, 'kind': kind.name, 'tables': [
+        {'heading': '履修科目確認表', 'rows': [
+          ['科目区分', '既修得単位(昼間)', '既修得単位(夜間)'],
+          ['合成科目区分', '4.5', '1.5'],
+        ]},
+      ],
+    }, kind)!;
+    final flat = captured.singleWhere((entry) => entry.$1 == kind);
+    final drive = _Drive();
+    expect(await share(drive, packets: [(kind, split)], preserveAcademicHistory: true), isTrue);
+    final published = drive.bytes;
+    expect(await share(drive, packets: [flat], preserveAcademicHistory: true,
+      at: time.add(const Duration(minutes: 1))), isTrue);
+    expect(drive.bytes, published);
+    expect(drive.writes, 1);
+  });
+
   test('verified registration captures retain missing terms and refresh explicit outcomes', () async {
     const kind = CoursePlannerImportKind.registration;
     String token(List<Map<String, Object?>> tables, {String? year}) =>

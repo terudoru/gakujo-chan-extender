@@ -351,6 +351,31 @@ try {
     { method: "GET", url: regFlowUrl },
   ]);
 
+  // The documented report icon can expose a same-origin PDF directly.
+  const balancePdfUrl = portal + "reports/credit-confirmation.pdf?fixture=1";
+  const pdfBytes = Buffer.from("%PDF-1.4\nsynthetic response\n");
+  await context.route(balancePdfUrl, route => {
+    requests.push({method:route.request().method(), url:route.request().url()});
+    return route.fulfill({contentType:"application/pdf", body:pdfBytes});
+  });
+  delayed.set(regFlowUrl, parityRegHtml +
+    '<a href="' + balancePdfUrl + '"><img alt="履修科目確認表"></a>' +
+    '<a href="https://evil.example/campusweb/wrong.pdf">履修科目確認表</a>' +
+    '<a href="/campusweb/unrelated.pdf">別の書類</a>');
+  requests.length = 0;
+  const withPdf = await runFetch();
+  assert.equal(withPdf.balancePdf, pdfBytes.toString("base64"));
+  assert.deepEqual(withPdf.packets.grades, liveParityGrades);
+  assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, balancePdfUrl]);
+  assert.ok(requests.every(request => request.method === "GET"));
+  assert.equal(page.url(), url);
+  await context.unroute(balancePdfUrl);
+  const unavailablePdf = await runFetch();
+  assert.equal(unavailablePdf.balancePdf, undefined);
+  assert.equal(unavailablePdf.complete, false);
+  assert.deepEqual(unavailablePdf.packets.balances, liveParityBalances);
+  delayed.set(regFlowUrl, parityRegHtml);
+
   // The rs portal tab has no grades link: both inquiries must still be fetched.
   const rsUrl = portal + "campusportal.do?page=main&tabId=rs";
   delayed.set(rsUrl, '<nav><span onclick="loadPortletMenu(\'main\',\'campussquare.do?_flowId=RSW0001000-flow\')">履修登録・登録状況照会</span></nav>');

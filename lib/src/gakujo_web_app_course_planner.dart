@@ -146,6 +146,9 @@ extension _CoursePlannerActions on _GakujoWebAppState {
           CoursePlannerImportKind.registration when backgroundToken != null =>
             mergeCoursePlannerRegistration(backgroundToken, token) ??
                 backgroundToken,
+          CoursePlannerImportKind.balances
+              when backgroundToken != null && hasCoursePlannerSplitBalances(backgroundToken) =>
+            backgroundToken,
           _ => token,
         };
       }

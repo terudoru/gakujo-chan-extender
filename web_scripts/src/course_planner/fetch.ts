@@ -33,6 +33,7 @@ const gradesFallback =
 const maxPageLength = 4 * 1024 * 1024;
 const requestTimeout = 8000;
 const captureTimeout = 60000;
+const balancePdfLimit = 2 * 1024 * 1024;
 type Term = Pick<TimetableSnapshot, "year" | "semester">;
 type Target = { path: string; year?: string; semester: Term["semester"] };
 
@@ -154,6 +155,69 @@ function discover(docs: Document[], title: string) {
 
 const sessionExpired = new Error("session-expired");
 
+/** The university's named report may be exposed as a direct same-origin PDF. */
+function advertisedBalancePdf(page: Omit<Page, "source">) {
+  const candidates = new Set<string>();
+  const {visible} = staticView(page.href);
+  for (const link of Array.from(page.doc.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
+    if (!visible(link)) continue;
+    const namesOnLink = [link.textContent, link.title, link.getAttribute("aria-label"),
+      ...Array.from(link.querySelectorAll<HTMLImageElement>("img[alt]"), icon => icon.getAttribute("alt"))];
+    if (!namesOnLink.some(value => normalized(value).replace(/\s/g, "") === names.balances)) continue;
+    const href = link.getAttribute("href") || "";
+    try {
+      const url = new URL(href, page.href);
+      if (url.origin === origin && !url.username && !url.password &&
+          (/^\/campusweb\/.*\.pdf$/i.test(url.pathname) ||
+            (servlet(url) && link.type.toLowerCase() === "application/pdf")))
+        candidates.add(url.origin + url.pathname + url.search);
+    } catch {
+      /* Unreadable links cannot authorize a download. */
+    }
+  }
+  return candidates.size === 1 ? candidates.values().next().value : undefined;
+}
+
+async function readBalancePdf(url: string, signal: AbortSignal, deadline: number) {
+  const remaining = deadline - Date.now();
+  if (signal.aborted || remaining <= 0) return null;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener("abort", abort, {once:true});
+  const timeout = setTimeout(abort, Math.min(remaining, requestTimeout));
+  try {
+    const response = await fetch(url, {credentials:"same-origin", redirect:"error", signal:controller.signal});
+    if (!response.ok || response.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf" ||
+        Number(response.headers.get("Content-Length")) > balancePdfLimit || !response.body) return null;
+    const reader = response.body.getReader();
+    let length = 0;
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      if ((length += value.length) > balancePdfLimit) return null;
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    if (String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-") return null;
+    let binary = "";
+    for (let start = 0; start < length; start += 16384)
+      binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
+    return btoa(binary);
+  } catch {
+    return null;
+  } finally {
+    abort();
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", abort);
+  }
+}
+
 async function get(path: string, signal: AbortSignal, deadline: number) {
   const remaining = deadline - Date.now();
   if (signal.aborted || remaining <= 0) return null;
@@ -229,6 +293,9 @@ async function fetchInquiries(signal: AbortSignal) {
     return true;
   }
   const rootRead = first && includeRegistration(first);
+  const balanceUrl = first && rootRead ? advertisedBalancePdf(first) : undefined;
+  // The registration flow's current report takes precedence over the archive.
+  const balancePdf = balanceUrl ? await readBalancePdf(balanceUrl, signal, deadline) : null;
   for (const [key, next] of pending) {
     if (signal.aborted || Date.now() >= deadline) break;
     pending.delete(key);
@@ -306,9 +373,10 @@ async function fetchInquiries(signal: AbortSignal) {
   const ordered: Partial<Record<Kind, Packet>> = {};
   for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
   const gradePageRead = grades && extractor(staticView(grades.href)).pageKinds(grades.doc).includes("grades");
-  const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) &&
+  const complete = !!gradePageRead && !!rootRead && (!studentPath || !!studentPage) && (!balanceUrl || !!balancePdf) &&
     registrationFits && pending.size === 0 && unresolved.size === 0 && ![...timetable.values()].includes(null);
-  return {v:1, packets:ordered, timetable:[...timetable.values()].filter(value => value !== null), complete};
+  return {v:1, packets:ordered, timetable:[...timetable.values()].filter(value => value !== null), complete,
+    ...(balancePdf && {balancePdf})};
 }
 
 function start() {
@@ -334,7 +402,13 @@ function start() {
     cancel,
   };
   void fetchInquiries(controller.signal).then(
-    (capture) => { result = JSON.stringify(capture); },
+    (capture) => {
+      result = JSON.stringify(capture);
+      if (capture?.balancePdf && result.length > 7 * 1024 * 1024) {
+        const {balancePdf, ...inquiries} = capture;
+        result = JSON.stringify({...inquiries, complete:false});
+      }
+    },
     () => { result = "null"; },
   );
   return result;
