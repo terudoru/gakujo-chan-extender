@@ -17,11 +17,15 @@ extension _CoursePlannerActions on _GakujoWebAppState {
             : null);
   }
 
-  void _retryPlannerSharing() {
+  void _retryPlannerSharing({bool restoreGoogle = false}) {
+    if (restoreGoogle) _plannerGoogleRetryEpoch = _plannerShareEpoch;
     _plannerShareRetry ??= Timer(const Duration(minutes: 5), () {
+      final retryGoogle = _plannerGoogleRetryEpoch == _plannerShareEpoch;
+      _plannerGoogleRetryEpoch = null;
       _plannerShareRetry = null;
+      if (!_plannerShareLoaded) unawaited(_loadPlannerSharing());
       if (_starSyncGoogleAuth.currentEmail == null) {
-        unawaited(_restorePlannerGoogleSession());
+        if (retryGoogle) unawaited(_restorePlannerGoogleSession());
       } else {
         unawaited(_autoSharePlannerResults());
       }
@@ -29,15 +33,17 @@ extension _CoursePlannerActions on _GakujoWebAppState {
   }
 
   Future<void> _loadPlannerSharing() async {
+    if (_plannerShareLoaded) return;
     try {
       final value = await SecureStorageFactory.create().read(
         key: 'planner_drive_sharing_enabled',
       );
-      if (!mounted) return;
+      if (!mounted || _plannerShareLoaded) return;
       _setPlannerSharingLoaded(value != 'false');
       unawaited(_autoSharePlannerResults());
     } on Object {
       developer.log('Planner sharing settings unavailable');
+      if (mounted && !_plannerShareLoaded) _retryPlannerSharing();
     }
   }
 

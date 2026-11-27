@@ -2457,6 +2457,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   int _plannerShareEpoch = 0;
   final Map<String, DateTime> _plannerShareAttempts = {};
   Timer? _plannerShareRetry;
+  int? _plannerGoogleRetryEpoch;
   final _plannerStudentScopes = <String, String>{};
 
   void _submitLoginAccount(String account) {
@@ -2573,6 +2574,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await (_starSyncLoad ??= () async {
         await _starSyncEngine.load();
         if (_starSyncEngine.config != null) {
+          final epoch = _plannerShareEpoch;
           try {
             _starSyncGoogleEmail = await _driveDownloadQueue.run(
               () => _starSyncGoogleAuth.restore(
@@ -2582,6 +2584,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           } on Object catch (error) {
             developer.log('Failed to restore Google sign-in: ${error.runtimeType}',
                 name: 'MoreBetterGakujo');
+            if (mounted && epoch == _plannerShareEpoch &&
+                _starSyncGoogleAuth.currentEmail == null) {
+              _retryPlannerSharing(restoreGoogle: true);
+            }
           }
         } else {
           unawaited(_restorePlannerGoogleSession());
@@ -2609,22 +2615,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _restorePlannerGoogleSession() async {
+    final epoch = _plannerShareEpoch;
     try {
-      // Drive downloads and app-wide sync can restore their configured account.
+      // Let Drive downloads finish restoring their account before trying another source.
       await _driveDownloadsLoad;
       await _driveDownloadQueue.run(() async {
-        if (!mounted || _driveDownloadPreference.enabled ||
-            _starSyncEngine.config != null || _starSyncGoogleAuth.currentEmail != null) {
+        final config = _starSyncEngine.config;
+        if (!mounted || epoch != _plannerShareEpoch || _starSyncGoogleAuth.currentEmail != null ||
+            (config == null && _driveDownloadPreference.enabled)) {
           return;
         }
-        final email = await _starSyncGoogleAuth.restore();
-        if (!mounted || !sameGoogleAccount(email, _starSyncGoogleAuth.currentEmail)) return;
+        final email = await _starSyncGoogleAuth.restore(expectedEmail: config?.googleEmail);
+        if (!mounted || epoch != _plannerShareEpoch ||
+            !sameGoogleAccount(email, _starSyncGoogleAuth.currentEmail)) {
+          return;
+        }
         setState(() => _starSyncGoogleEmail = email);
         unawaited(_autoSharePlannerResults());
       });
     } on Object {
       developer.log('Could not restore Google login for the planner');
-      if (mounted) _retryPlannerSharing();
+      if (mounted && epoch == _plannerShareEpoch) {
+        _retryPlannerSharing(restoreGoogle: true);
+      }
     }
   }
 

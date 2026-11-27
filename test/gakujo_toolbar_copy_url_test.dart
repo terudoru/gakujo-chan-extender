@@ -11,6 +11,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/generated/history_marker.g.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart' as win;
 
@@ -59,21 +60,25 @@ class _Pops extends NavigatorObserver {
 }
 
 class _RestoringGoogleAuth extends Fake implements StarSyncGoogleAuth {
+  _RestoringGoogleAuth(this.configuredEmail, {required this.failRestore});
+  final String? configuredEmail;
+  final bool failRestore;
   final tried = Completer<void>();
   final restored = Completer<void>();
-  final sharing = Completer<void>();
   @override
   String? currentEmail;
   @override
   int generation = 0;
   @override
   Future<String?> restore({String? expectedEmail}) async {
-    expect(expectedEmail, isNull);
+    expect(expectedEmail, configuredEmail);
     if (!tried.isCompleted) {
       tried.complete();
-      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.network);
+      if (failRestore) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.network);
+      }
     }
-    currentEmail = 'resumed@example.invalid';
+    currentEmail = configuredEmail ?? 'resumed@example.invalid';
     generation++;
     restored.complete();
     return currentEmail;
@@ -81,7 +86,6 @@ class _RestoringGoogleAuth extends Fake implements StarSyncGoogleAuth {
 
   @override
   Future<String> accessToken({bool forceRefresh = false}) async {
-    if (!sharing.isCompleted) sharing.complete();
     throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.network);
   }
 }
@@ -492,18 +496,40 @@ void main() {
         });
       }
 
-      // A planner-only Google login recovers on its own after a failed startup.
-      final auth = _RestoringGoogleAuth();
-      final page = _Toolbar(tester, ++viewId, academicFixture: true, googleAuth: auth);
-      try {
-        await page.mount();
-        await page._waitFor(auth.tried, 'restore Google login on startup');
-        expect(auth.sharing.isCompleted, isFalse);
-        await tester.pump(const Duration(minutes: 5));
-        await page._waitFor(auth.restored, 'retry Google login without another sync setting');
-        await page._waitFor(auth.sharing, 'start the connected academic data transfer');
-      } finally {
-        await page.close();
+      // Academic sharing retries the account and settings without another action.
+      for (final (configuredEmail, sharingPreference, failRestore) in [
+        (null, null, true),
+        (null, true, false),
+        (null, false, false),
+        ('configured@example.invalid', null, true),
+      ]) {
+        final auth = _RestoringGoogleAuth(configuredEmail, failRestore: failRestore);
+        final page = _Toolbar(
+          tester,
+          ++viewId,
+          academicFixture: true,
+          googleAuth: auth,
+          googleSyncEmail: configuredEmail,
+          plannerSharingEnabled: sharingPreference,
+        );
+        try {
+          await page.mount();
+          await page._waitFor(auth.tried, 'restore Google login on startup');
+          expect(page.plannerCaptureStarted.isCompleted, isFalse);
+          await tester.pump(const Duration(minutes: 5));
+          await page._waitFor(auth.restored, 'retry the same Google login');
+          if (sharingPreference != null) {
+            await page._waitFor(page.plannerPreferenceRecovered, 'retry reading the sharing preference');
+          }
+          if (sharingPreference != false) {
+            await page._waitFor(page.plannerCaptureStarted, 'start academic data transfer');
+          } else {
+            await tester.pumpAndSettle();
+            expect(page.plannerCaptureStarted.isCompleted, isFalse);
+          }
+        } finally {
+          await page.close();
+        }
       }
     },
     variant: TargetPlatformVariant.only(TargetPlatform.windows),
@@ -519,11 +545,17 @@ class _Toolbar {
     this.fetchHandler,
     this.captureThrows = false,
     this.googleAuth,
+    this.googleSyncEmail,
+    this.plannerSharingEnabled,
   });
   final bool academicFixture;
   final Future<Object?> Function()? fetchHandler;
   final bool captureThrows;
   final StarSyncGoogleAuth? googleAuth;
+  final String? googleSyncEmail;
+  final bool? plannerSharingEnabled;
+  final plannerPreferenceRecovered = Completer<void>();
+  final plannerCaptureStarted = Completer<void>();
   final WidgetTester tester;
   final int id;
   final _pops = _Pops();
@@ -555,9 +587,23 @@ class _Toolbar {
   Future<void> mount() async {
     final messenger = tester.binding.defaultBinaryMessenger;
     final queue = StorageOperationQueue();
+    var failedPlannerPreferenceRead = false;
     final data = {
       'more_better_gakujo_setup_completed': 'true',
       'more_better_gakujo_disabled_feature_flags': 'update_notice',
+      if (plannerSharingEnabled != null)
+        'planner_drive_sharing_enabled': '$plannerSharingEnabled',
+      if (googleSyncEmail != null)
+        starSyncConfigKey: jsonEncode({
+          'backend': 'googleDrive', 'googleEmail': googleSyncEmail,
+        }),
+      if (googleSyncEmail != null)
+        starSyncStateKey: jsonEncode(StarSyncState(
+          deviceId: 'synthetic-device',
+          dataKey: 'synthetic-key',
+          keyId: 'synthetic-key',
+          boundAccount: 'synthetic-account',
+        ).toJson()),
       if (academicFixture)
         'more_better_gakujo_active_login_account': 'synthetic-account',
       if (googleAuth != null)
@@ -572,6 +618,17 @@ class _Toolbar {
         final key = call.arguments['key'] as String?;
         switch (call.method) {
           case 'read':
+            if (key == 'planner_drive_sharing_enabled' && plannerSharingEnabled != null) {
+              if (!failedPlannerPreferenceRead) {
+                failedPlannerPreferenceRead = true;
+                throw PlatformException(code: 'storage-startup-unavailable');
+              }
+              if (!plannerPreferenceRecovered.isCompleted) plannerPreferenceRecovered.complete();
+            }
+            if (key?.startsWith('planner_drive_capture_') == true &&
+                !plannerCaptureStarted.isCompleted) {
+              plannerCaptureStarted.complete();
+            }
             return data[key];
           case 'write':
             data[key!] = call.arguments['value'] as String;

@@ -41,11 +41,17 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   @override
   int get generation => _generation;
 
-  Future<void> _initialize() => _initialization ??= GoogleSignIn.instance
-      .initialize(
+  Future<void> _initialize() => _initialization ??= () async {
+    try {
+      await GoogleSignIn.instance.initialize(
         clientId: Platform.isIOS ? config.iosClientId : null,
         serverClientId: _isAndroid ? config.androidServerClientId : null,
       );
+    } on Object {
+      _initialization = null;
+      rethrow;
+    }
+  }();
 
   static Future<bool> _lookupGoogle() async {
     try {
