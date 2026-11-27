@@ -27,7 +27,10 @@ bool _timestamp(Object? value) {
   return time != null && plannerTimestamp(time) == value;
 }
 
-Map<String, dynamic> decodeDrivePlannerHandoff(List<int> bytes) {
+Map<String, dynamic> decodeDrivePlannerHandoff(
+  List<int> bytes, {
+  bool allowUnreadableTokens = false,
+}) {
   if (bytes.length > drivePlannerMaxBytes) throw const FormatException();
   final data = jsonDecode(utf8.decode(bytes));
   if (data is! Map<String, dynamic> ||
@@ -46,7 +49,7 @@ Map<String, dynamic> decodeDrivePlannerHandoff(List<int> bytes) {
     if (packet is! Map<String, dynamic> ||
         packet.length != 3 ||
         !_timestamp(packet['capturedAt']) ||
-        packet['token'] is! String ||
+        !packet.containsKey('token') ||
         !seen.add('${packet['kind']}')) {
       throw const FormatException();
     }
@@ -54,12 +57,16 @@ Map<String, dynamic> decodeDrivePlannerHandoff(List<int> bytes) {
       (k) => k.name == packet['kind'],
     );
     if (kinds.isEmpty ||
-        !validCoursePlannerToken(packet['token'] as String, kinds.single)) {
+        (!allowUnreadableTokens &&
+            !_readablePlannerToken(packet['token'], kinds.single))) {
       throw const FormatException();
     }
   }
   return data;
 }
+
+bool _readablePlannerToken(Object? token, CoursePlannerImportKind kind) =>
+    token is String && validCoursePlannerToken(token, kind);
 
 /// Reads before merging; guards are checked again by the HTTP transport at send.
 Future<bool> shareDrivePlannerHandoffs({
@@ -78,20 +85,31 @@ Future<bool> shareDrivePlannerHandoffs({
   Map<String, dynamic>? previous;
   if (remote != null) {
     try {
-      previous = decodeDrivePlannerHandoff(remote.bytes);
+      previous = decodeDrivePlannerHandoff(
+        remote.bytes,
+        allowUnreadableTokens: preserveAcademicHistory,
+      );
     } on FormatException {
-      // Replace unreadable or unsupported handoffs with the captured kinds.
+      // The saved envelope does not establish which inquiries it contains.
     }
   }
-  final packets = <String, Map<String, dynamic>>{
-    if (previous != null)
-      for (final packet in previous['packets'] as List)
-        (packet as Map<String, dynamic>)['kind'] as String: {
-          'kind': packet['kind'],
-          'capturedAt': packet['capturedAt'],
-          'token': packet['token'],
-        },
-  };
+  final packets = <String, Map<String, dynamic>>{};
+  final unreadable = <CoursePlannerImportKind>{};
+  if (previous != null) {
+    for (final packet in previous['packets'] as List) {
+      final kind = coursePlannerHandoffOrder.singleWhere(
+        (kind) => kind.name == packet['kind'],
+      );
+      final token = packet['token'];
+      if (!_readablePlannerToken(token, kind)) unreadable.add(kind);
+      packets[kind.name] = {
+        'kind': kind.name,
+        'capturedAt': packet['capturedAt'],
+        // Keep bounded tokens until their inquiry is captured again.
+        'token': token is String && token.length <= 2 * 1024 * 1024 ? token : null,
+      };
+    }
+  }
   final timestamp = plannerTimestamp(capturedAt);
   var changed = false;
   var complete = true;
@@ -101,7 +119,10 @@ Future<bool> shareDrivePlannerHandoffs({
     if (saved?['token'] == token) continue;
     var next = token;
     var at = timestamp;
-    if (preserveAcademicHistory && saved != null) {
+    if (saved != null && unreadable.contains(kind)) {
+      if (timestamp.compareTo(saved['capturedAt'] as String) < 0) continue;
+      unreadable.remove(kind);
+    } else if (preserveAcademicHistory && saved != null) {
       final savedAt = saved['capturedAt'] as String;
       final prior = saved['token'] as String;
       final supersedes = timestamp.compareTo(savedAt) > 0;
@@ -134,6 +155,7 @@ Future<bool> shareDrivePlannerHandoffs({
     };
     changed = true;
   }
+  complete = complete && unreadable.isEmpty;
   if (!changed) return complete;
   final previousUpdate = previous?['updatedAt'] as String?;
   final bytes = utf8.encode(

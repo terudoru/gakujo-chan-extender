@@ -160,6 +160,47 @@ void main() {
       plannerTimestamp(time.add(const Duration(days: 1))),
     );
   });
+  test('a partial refresh preserves existing grades and registration while a profile is unreadable', () async {
+    final previous = jsonDecode(utf8.decode(fixture)) as Map<String, dynamic>;
+    final previousPackets = previous['packets'] as List;
+    previousPackets.first['token'] = 'MBGPLAN2.e30';
+    previousPackets.removeWhere((packet) => packet['kind'] == 'balances');
+    final drive = _Drive()..bytes = utf8.encode(jsonEncode(previous));
+    final balances = captured.singleWhere(
+      (entry) => entry.$1 == CoursePlannerImportKind.balances,
+    );
+    final profileCapture = captured.singleWhere(
+      (entry) => entry.$1 == CoursePlannerImportKind.profile,
+    );
+    final refreshed = time.add(const Duration(days: 1));
+    expect(
+      await share(drive, packets: [balances], at: refreshed,
+        preserveAcademicHistory: true),
+      isFalse,
+    );
+    final partial = jsonDecode(utf8.decode(drive.bytes!))['packets'] as List;
+    expect(partial.where((packet) => packet['kind'] != 'balances'), previousPackets);
+    expect(partial.singleWhere((packet) => packet['kind'] == 'balances'), {
+      'kind': 'balances', 'capturedAt': plannerTimestamp(refreshed), 'token': balances.$2,
+    });
+    expect(
+      await share(drive, packets: [profileCapture],
+        at: time.subtract(const Duration(seconds: 1)), preserveAcademicHistory: true),
+      isFalse,
+    );
+    expect(drive.writes, 1);
+    expect(
+      await share(drive, packets: [profileCapture], at: refreshed,
+        preserveAcademicHistory: true),
+      isTrue,
+    );
+    final repaired = decodeDrivePlannerHandoff(drive.bytes!)['packets'] as List;
+    expect(repaired.first, {
+      'kind': 'profile', 'capturedAt': plannerTimestamp(refreshed), 'token': profileCapture.$2,
+    });
+    expect(repaired.skip(1), partial.skip(1));
+    expect(drive.writes, 2);
+  });
   test('unchanged content performs no write', () async {
     final drive = _Drive()..bytes = fixture;
     await share(drive, at: time.add(const Duration(days: 1)));
