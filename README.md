@@ -42,7 +42,7 @@ More Better Gakujo は、新潟大学の学務情報システム（学情）を�
 
 ### iOS/iPadOS
 
-App Store では配布していません。各自Apple Accountで署名して入れてください。iOS/iPadOS 14 以降が必要です。
+App Store では配布していません。各自Apple Accountで署名して入れてください。iOS/iPadOS 15 以降が必要です。
 
 - Mac か PC がある場合は、IPA を Sideloadly にドロップして署名する。Sideloadly の自動更新デーモンを有効にしておく
 - Mac がない場合は、SideStore の初期設定を済ませたうえで、次の source を追加してインストールする。GitHub Releases の IPA を直接ダウンロードして SideStore で開いてもよい

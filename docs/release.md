@@ -90,7 +90,7 @@ base64 -i upload-keystore.jks
 App Store では配布せず、利用者が自分の Apple Account で署名する前提で、未署名の IPA を配ります。利用者向けの手順と注意は [README](../README.md) の「iOS/iPadOS」にあります。
 
 - Bundle ID は `net.yoshida.morebettergakujo` に固定する。変えると、Sideloadly と SideStore は別のアプリとして扱う
-- 対象は iOS/iPadOS 14 以降
+- 対象は iOS/iPadOS 15 以降
 - SideStore の source は、`distribution/altstore-source.json` を raw の URL で案内する。source の `downloadURL` は、GitHub Releases の IPA の URL に合わせる
 
 ```text
