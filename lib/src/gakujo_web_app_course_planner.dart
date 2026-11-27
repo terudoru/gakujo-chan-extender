@@ -97,8 +97,8 @@ extension _CoursePlannerActions on _GakujoWebAppState {
     try {
       final storage = SecureStorageFactory.create();
       final googleAccount = starSyncAccountHash(session.email);
-      // An earlier unscoped capture could not publish archived timetables.
-      final version = student == null ? 'v3' : 'v4';
+      // Refresh the academic report once after upgrading to the scoped format.
+      final version = student == null ? 'v3' : 'v5';
       final key = 'planner_drive_capture_${version}_${account}_$googleAccount';
       captureKey = key;
       final last = await storage.read(key: key);
@@ -196,14 +196,18 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       }
       final timetablePending = timetableShare == PlannerTimetableShare.pending;
       complete &= !timetablePending;
-      final success = captured.isEmpty ||
-          await retryPlannerDriveConflict(() => shareDrivePlannerHandoffs(
+      Future<bool> shareReport({String? scope}) =>
+          retryPlannerDriveConflict(() => shareDrivePlannerHandoffs(
             transport: activeTransport,
             captured: captured,
             allowed: allowed,
             capturedAt: capturedAt,
             preserveAcademicHistory: student != null,
+            student: scope,
           ));
+      final scoped = captured.isEmpty || student == null || await shareReport(scope: student);
+      final legacy = captured.isEmpty || await shareReport();
+      final success = scoped && legacy;
       if ((timetablePending || !success) && !retryCapture && allowed()) {
         await storage.delete(key: key);
         retryCapture = true;
@@ -260,6 +264,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         checkCurrent: session.checkCurrent,
       );
       await transport.delete(drivePlannerHandoffName);
+      await transport.delete(driveScopedPlannerHandoffName);
       await transport.delete(drivePlannerTimetableName);
       if (mounted) {
         _showSnackBar('共有した照会結果を削除しました。自動共有がオンの場合は次の照会で再び共有されます');

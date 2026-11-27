@@ -81,7 +81,7 @@ void main() {
     },
   );
 
-  for (final name in [drivePlannerHandoffName, drivePlannerTimetableName]) {
+  for (final name in [drivePlannerHandoffName, driveScopedPlannerHandoffName, drivePlannerTimetableName]) {
     test('planner retries a changed Drive revision by reading and merging again: $name', () async {
       final file = drive.add(name, [1]);
       final peer = StarSyncGoogleDriveTransport(

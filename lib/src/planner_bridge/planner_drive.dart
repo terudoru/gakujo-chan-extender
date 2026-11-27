@@ -19,6 +19,7 @@ class NativePlannerDrive implements PlannerDrive {
     Map<String, String> query = const {},
     List<int> body = const [],
     String? contentType,
+    int maxBytes = plannerMaxBytes,
     void Function()? beforeSend,
   }) async {
     final session = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
@@ -30,7 +31,7 @@ class NativePlannerDrive implements PlannerDrive {
       Uri.https('www.googleapis.com', path, query),
       headers: {'authorization': 'Bearer $token', 'content-type': ?contentType},
       body: body,
-      maxBytes: plannerMaxBytes,
+      maxBytes: maxBytes,
       timeout: const Duration(seconds: 29),
       beforeSend: () {
         session.checkCurrent();
@@ -140,8 +141,8 @@ class NativePlannerDrive implements PlannerDrive {
   }
 
   @override
-  Future<String> read(String id) async =>
-      utf8.decode(await _request('GET', _path(id), query: {'alt': 'media'}));
+  Future<String> read(String id, {int maxBytes = plannerMaxBytes}) async =>
+      utf8.decode(await _request('GET', _path(id), query: {'alt': 'media'}, maxBytes: maxBytes));
   @override
   Future<String> create(
     String name,

@@ -35,6 +35,7 @@ class Drive extends Fake implements PlannerDrive {
   String fileName = 'mbg-planner-account-key-v1';
   String text = 'fixture';
   int writes = 0;
+  int? readLimit;
   String owner = 'synthetic-owner';
   Completer<String>? pendingOwner;
   final created = <(String, String, Map<String, String>?)>[];
@@ -50,7 +51,10 @@ class Drive extends Fake implements PlannerDrive {
   Future<String> name(String id) async =>
       pending == null ? fileName : pending!.future;
   @override
-  Future<String> read(String id) async => text;
+  Future<String> read(String id, {int maxBytes = plannerMaxBytes}) async {
+    readLimit = maxBytes;
+    return text;
+  }
   @override
   Future<Map<String, dynamic>> list(
     String prefix,
@@ -461,6 +465,18 @@ void main() {
       );
     }
     expect(drive.writes, 0);
+  });
+  test('the scoped academic report is advertised, exact and read-only', () async {
+    const name = 'mbg-gakujo-handoff.v2.json';
+    drive.fileName = name;
+    final hello = (await call('hello'))['result'] as Map;
+    expect(hello['capabilities'], contains('gakujo-handoff-scoped'));
+    expect((await call('drive.list', {'nameExact': name}))['ok'], true);
+    expect((await call('drive.read', {'fileId': 'report'}))['ok'], true);
+    expect(drive.readLimit, 8 * 1024 * 1024);
+    expect((await call('drive.list', {'namePrefix': name}))['error']['code'], 'forbidden');
+    expect((await call('drive.create', {'name': name, 'text': '{}'}))['error']['code'], 'forbidden');
+    expect((await call('drive.delete', {'fileId': 'report'}))['error']['code'], 'forbidden');
   });
   test('owner lookup cannot deliver a previous account identity', () async {
     drive.pendingOwner = Completer<String>();

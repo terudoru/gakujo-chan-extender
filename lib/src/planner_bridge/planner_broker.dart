@@ -53,7 +53,7 @@ abstract interface class PlannerDrive {
     bool exact = false,
   });
   Future<String> name(String id);
-  Future<String> read(String id);
+  Future<String> read(String id, {int maxBytes = plannerMaxBytes});
   Future<String> create(
     String name,
     String text,
@@ -245,7 +245,8 @@ class PlannerBroker {
       case 'hello':
         return {
           'version': 2,
-          'capabilities': ['drive-appdata', 'native-sign-in', plannerTimetableCapability],
+          'capabilities': ['drive-appdata', 'native-sign-in', plannerTimetableCapability,
+            plannerScopedHandoffCapability],
           'sessionGeneration': generation,
           'session': session,
         };
@@ -344,8 +345,10 @@ class PlannerBroker {
           if (!isPlannerReadableName(name)) {
             throw const PlannerBridgeException('forbidden');
           }
-          final text = await drive.read(id);
-          if (utf8.encode(text).length > plannerMaxBytes) {
+          final maxBytes = name == drivePlannerHandoffName || name == driveScopedPlannerHandoffName
+              ? drivePlannerMaxBytes : plannerMaxBytes;
+          final text = await drive.read(id, maxBytes: maxBytes);
+          if (utf8.encode(text).length > maxBytes) {
             throw const PlannerBridgeException('forbidden');
           }
           return {'text': text};

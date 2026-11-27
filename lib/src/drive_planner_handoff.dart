@@ -4,14 +4,17 @@ import 'course_planner_handoff.dart';
 import 'star_sync/star_sync_transport.dart';
 
 const drivePlannerHandoffName = 'mbg-gakujo-handoff.v1.json';
+const driveScopedPlannerHandoffName = 'mbg-gakujo-handoff.v2.json';
 const drivePlannerTimetableName = 'mbg-gakujo-timetable.v1.json';
 const plannerTimetableCapability = 'gakujo-timetable';
+const plannerScopedHandoffCapability = 'gakujo-handoff-scoped';
 const drivePlannerMaxBytes = 8 * 1024 * 1024;
 const _plannerTimetableMaxBytes = 4 * 1024 * 1024;
 const _plannerBindingName = 'mbg-planner-student-binding-v1';
 
 bool isPlannerInquiryName(String name) =>
-    name == drivePlannerHandoffName || name == drivePlannerTimetableName;
+    name == drivePlannerHandoffName || name == driveScopedPlannerHandoffName ||
+    name == drivePlannerTimetableName;
 
 class PlannerDriveConflict implements Exception {
   const PlannerDriveConflict();
@@ -44,12 +47,20 @@ bool _timestamp(Object? value) {
 Map<String, dynamic> decodeDrivePlannerHandoff(
   List<int> bytes, {
   bool allowUnreadableTokens = false,
+  String? student,
 }) {
   if (bytes.length > drivePlannerMaxBytes) throw const FormatException();
   final data = jsonDecode(utf8.decode(bytes));
+  final savedStudent = data is Map ? data['student'] : null;
+  if (student != null && data is Map && data['v'] == 2 &&
+      data['kind'] == 'mbg-gakujo-handoff' && savedStudent is String &&
+      _studentScope.hasMatch(savedStudent) && savedStudent != student) {
+    throw const PlannerTimetableStudentMismatch();
+  }
   if (data is! Map<String, dynamic> ||
-      data.length != 4 ||
-      data['v'] != 1 ||
+      data.length != (student == null ? 4 : 5) ||
+      data['v'] != (student == null ? 1 : 2) ||
+      (student != null && (!_studentScope.hasMatch(student) || savedStudent != student)) ||
       data['kind'] != 'mbg-gakujo-handoff' ||
       !_timestamp(data['updatedAt'])) {
     throw const FormatException();
@@ -89,10 +100,14 @@ Future<bool> shareDrivePlannerHandoffs({
   required bool Function() allowed,
   required DateTime capturedAt,
   bool preserveAcademicHistory = false,
+  String? student,
 }) async {
   if (!allowed() || captured.isEmpty) return false;
+  if (student != null && !_studentScope.hasMatch(student)) throw const FormatException();
+  final path = student == null ? drivePlannerHandoffName : driveScopedPlannerHandoffName;
+  final preserveHistory = preserveAcademicHistory || student != null;
   final remote = await transport.get(
-    drivePlannerHandoffName,
+    path,
     maxBytes: drivePlannerMaxBytes,
   );
   if (!allowed()) return false;
@@ -101,7 +116,8 @@ Future<bool> shareDrivePlannerHandoffs({
     try {
       previous = decodeDrivePlannerHandoff(
         remote.bytes,
-        allowUnreadableTokens: preserveAcademicHistory,
+        allowUnreadableTokens: preserveHistory,
+        student: student,
       );
     } on FormatException {
       // The saved envelope does not establish which inquiries it contains.
@@ -136,7 +152,7 @@ Future<bool> shareDrivePlannerHandoffs({
     if (saved != null && unreadable.contains(kind)) {
       if (timestamp.compareTo(saved['capturedAt'] as String) < 0) continue;
       unreadable.remove(kind);
-    } else if (preserveAcademicHistory && saved != null) {
+    } else if (preserveHistory && saved != null) {
       final savedAt = saved['capturedAt'] as String;
       final prior = saved['token'] as String;
       final supersedes = timestamp.compareTo(savedAt) > 0;
@@ -182,8 +198,9 @@ Future<bool> shareDrivePlannerHandoffs({
   final previousUpdate = previous?['updatedAt'] as String?;
   final bytes = utf8.encode(
     jsonEncode({
-      'v': 1,
+      'v': student == null ? 1 : 2,
       'kind': 'mbg-gakujo-handoff',
+      'student': ?student,
       'updatedAt': previousUpdate != null &&
               previousUpdate.compareTo(timestamp) > 0
           ? previousUpdate
@@ -196,7 +213,7 @@ Future<bool> shareDrivePlannerHandoffs({
   if (bytes.length > drivePlannerMaxBytes) throw const FormatException();
   if (!allowed()) return false;
   await transport.put(
-    drivePlannerHandoffName,
+    path,
     bytes,
     createOnly: remote == null,
   );

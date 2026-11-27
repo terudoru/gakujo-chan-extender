@@ -126,17 +126,48 @@ void main() {
     bool Function()? allowed,
     DateTime? at,
     bool preserveAcademicHistory = false,
+    String? student,
   }) => shareDrivePlannerHandoffs(
     transport: drive,
     captured: packets ?? captured,
     allowed: allowed ?? () => true,
     capturedAt: at ?? time,
     preserveAcademicHistory: preserveAcademicHistory,
+    student: student,
   );
 
   test('Drive body matches shared fixture byte for byte', () async {
     final drive = _Drive();
     expect(await share(drive), isTrue);
+    expect(drive.bytes, fixture);
+  });
+  test('scoped academic reports keep matching inquiries and never claim the legacy copy', () async {
+    final drive = _Drive();
+    final student = 'a' * 43;
+    final source = captured.take(2).toList();
+    expect(await share(drive), isTrue);
+    expect(await share(drive, student: student, packets: [source.first]), isTrue);
+    final first = decodeDrivePlannerHandoff(drive.extra[driveScopedPlannerHandoffName]!, student: student);
+    expect(first.keys.toList(), ['v', 'kind', 'student', 'updatedAt', 'packets']);
+    expect(first, {
+      'v': 2, 'kind': 'mbg-gakujo-handoff', 'student': student,
+      'updatedAt': plannerTimestamp(time),
+      'packets': [(data['packets'] as List).first],
+    });
+    expect(await share(drive, student: student, packets: [source.last]), isTrue);
+    final saved = drive.extra[driveScopedPlannerHandoffName]!;
+    expect(decodeDrivePlannerHandoff(saved, student: student)['packets'],
+        (data['packets'] as List).take(2).toList());
+    await expectLater(share(drive, student: 'b' * 43),
+        throwsA(isA<PlannerTimetableStudentMismatch>()));
+    expect(drive.extra[driveScopedPlannerHandoffName], same(saved));
+
+    drive.extra[driveScopedPlannerHandoffName] = utf8.encode(jsonEncode({
+      ...first, 'student': '',
+    }));
+    expect(await share(drive, student: student, packets: source), isTrue);
+    expect(decodeDrivePlannerHandoff(drive.extra[driveScopedPlannerHandoffName]!,
+        student: student)['packets'], (data['packets'] as List).take(2).toList());
     expect(drive.bytes, fixture);
   });
   for (final corruption in [

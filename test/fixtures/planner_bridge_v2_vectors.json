@@ -17,7 +17,8 @@
           "capabilities": [
             "drive-appdata",
             "native-sign-in",
-            "gakujo-timetable"
+            "gakujo-timetable",
+            "gakujo-handoff-scoped"
           ],
           "sessionGeneration": 1,
           "session": {
