@@ -336,16 +336,20 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
       if (kind === "registration")
         for (const cell of Array.from(doc.querySelectorAll("th,td"))) {
           if (label(cell) !== "年度・学期" || !visible2(cell)) continue;
-          const year = (_a = leaf(cell.nextElementSibling).match(
+          const year2 = (_a = leaf(cell.nextElementSibling).match(
             /^(\d{4})年度\s*第?[12一二]学期$/
           )) == null ? void 0 : _a[1];
-          if (year) years.add(year);
+          if (year2) years.add(year2);
         }
+      const year = years.size === 1 ? Array.from(years)[0] : void 0;
       return __spreadValues({
         v: 1,
         kind,
-        tables
-      }, years.size === 1 ? { year: Array.from(years)[0] } : {});
+        tables: kind === "registration" && year ? tables.map(({ heading, rows }) => {
+          if (rows[0].includes("年度")) return { heading, rows };
+          return { heading, rows: [["年度", ...rows[0]], ...rows.slice(1).map((row) => [year, ...row])] };
+        }) : tables
+      }, year ? { year } : {});
     }
     return { visible: visible2, pageKinds: pageKinds2, academicTables: academicTables2, profile, packet: packet2 };
   }

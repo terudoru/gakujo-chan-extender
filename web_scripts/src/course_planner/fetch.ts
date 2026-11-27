@@ -61,15 +61,19 @@ function inquiryUrl(raw: string, base: string) {
 /** The registration page's semester tab, as calendar_registration_page_fetch reads it. */
 function semesterUrl(raw: string, base: string) {
   const clean = raw.trim().replace(/&amp;/g, "&");
-  if (!/[?&]_eventId=search&gakkiKbnCode=[0-9]+$/.test(clean)) return null;
   const url = parse(clean, base);
+  const params = url?.searchParams;
   if (
-    !url ||
-    !Array.from(url.searchParams.keys()).every((k) =>
-      /^(_flowExecutionKey|_flowId|_eventId|gakkiKbnCode|nendo|locale)$/.test(k),
+    !url || !params ||
+    !Array.from(params.keys()).every((k) =>
+      /^(_flowExecutionKey|_flowId|_eventId|gakkiKbnCode|nendo|locale)$/.test(k) && params.getAll(k).length === 1,
     ) ||
-    url.searchParams.getAll("_eventId").join() !== "search" ||
-    !/^[0-9]+$/.test(url.searchParams.getAll("gakkiKbnCode").join())
+    params.get("_eventId") !== "search" ||
+    !/^[0-9]+$/.test(params.get("gakkiKbnCode") || "") ||
+    (params.has("nendo") && !/^(19|20)\d{2}$/.test(params.get("nendo") || "")) ||
+    (params.has("_flowId") && params.get("_flowId") !== "RSW0001000-flow") ||
+    (params.has("_flowExecutionKey") && !/^e\d+s\d+$/.test(params.get("_flowExecutionKey") || "")) ||
+    (!params.has("_flowId") && !params.has("_flowExecutionKey"))
   )
     return null;
   return url.pathname + url.search;

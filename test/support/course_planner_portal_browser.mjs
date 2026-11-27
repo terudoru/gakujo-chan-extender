@@ -204,8 +204,8 @@ try {
   assert.deepEqual(packet.tables[1], {
     heading: "不許可となった科目",
     rows: [
-      ["開講番号", "科目名", "単位数"],
-      ["261G7014", "合成英語", "1.0"],
+      ["年度", "開講番号", "科目名", "単位数"],
+      ["2026", "261G7014", "合成英語", "1.0"],
     ],
   });
   assert.doesNotMatch(JSON.stringify(packet), /private|非公開|https?:|削除/);
@@ -410,6 +410,23 @@ try {
   // Sem1 timetable + Sem1 denied + Sem2 timetable (duplicate Sem2 denied table deduped).
   assert.equal(fetchedMultiSem.packets.registration.tables.length, 3);
   assert.equal(fetchedMultiSem.packets.registration.year, "2026");
+
+  // An advertised past-year tab has the same inquiry action. Denied tables
+  // retain their own printed year after combining captures from two years.
+  const oldQuery = "_flowExecutionKey=e1s1&_eventId=search&gakkiKbnCode=2&nendo=2025";
+  const oldRegUrl = portal + "campussquare.do?" + oldQuery;
+  delayed.set(regFlowUrl, sem1Html +
+    '<a href="/campusweb/campussquare.do?' + oldQuery.replaceAll("&", "&amp;") + '">2025年度 第2学期</a>' +
+    '<a href="/campusweb/campussquare.do?' + oldQuery.replaceAll("&", "&amp;") + '&amp;nendo=2024">重複指定</a>' +
+    '<a href="/campusweb/campussquare.do?_flowId=SIW0001300-flow&amp;_eventId=search&amp;gakkiKbnCode=2&amp;nendo=2025">別の照会</a>');
+  delayed.set(oldRegUrl, sem2Html.replaceAll("2026年度", "2025年度").replaceAll("'2026'", "'2025'").replaceAll("261G", "251G"));
+  requests.length = 0;
+  const combined = (await runFetch()).packets.registration;
+  assert.equal(combined.year, undefined);
+  assert.deepEqual(combined.tables.filter(table => table.heading === "不許可となった科目").map(table => table.rows[1].slice(0, 2)),
+    [["2026", "261G7020"], ["2025", "251G7020"]]);
+  assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, regSem2Url, oldRegUrl]);
+  delayed.set(regFlowUrl, sem1Html);
 
   // Link discovery: onclick & javascript: href work; cross-origin, _eventId, _flowExecutionKey,
   // non-campussquare, and conflicting duplicate flows are rejected; missing safe links use

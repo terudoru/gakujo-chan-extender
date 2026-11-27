@@ -512,11 +512,17 @@ export function extractor(view: View) {
         )?.[1];
         if (year) years.add(year);
       }
+    const year = years.size === 1 ? Array.from(years)[0] : undefined;
     return {
       v: 1,
       kind,
-      tables,
-      ...(years.size === 1 ? { year: Array.from(years)[0] } : {}),
+      tables: kind === "registration" && year ? tables.map(({ heading, rows }) => {
+        if (rows[0].includes("年度")) return { heading, rows };
+        // A combined capture can drop its packet-level year. Keep the printed
+        // scope on tables such as denials that carry no year in the original row.
+        return { heading, rows: [["年度", ...rows[0]], ...rows.slice(1).map(row => [year, ...row])] };
+      }) : tables,
+      ...(year ? { year } : {}),
     };
   }
   return { visible, pageKinds, academicTables, profile, packet };
