@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/drive_planner_handoff.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
@@ -55,10 +56,10 @@ void main() {
       .fold(0, (total, entry) => total + entry.value);
 
   test(
-    'planner duplicates use newest modified file and delete older exact names',
+    'planner writes update the newest inspected file and retain other copies',
     () async {
-      const name = 'mbg-gakujo-handoff.v1.json';
-      drive.add(name, [1], created: DateTime.utc(2020));
+      const name = drivePlannerHandoffName;
+      final older = drive.add(name, [1], created: DateTime.utc(2020));
       final latest = drive.add(name, [2], created: DateTime.utc(2019))
         ..modified = DateTime.utc(2026);
       final outside = drive.add(name, [9], created: DateTime.utc(2027))
@@ -67,19 +68,66 @@ void main() {
       final result = await transport.get(name);
       expect(result!.bytes, [2]);
       await transport.put(name, [4]);
-      await transport.removePlannerDuplicates();
       expect(
         drive.files
             .where((f) => f.name == name && f.spaces.contains('appDataFolder'))
-            .single
-            .id,
-        latest.id,
+            .map((file) => file.id),
+        [older.id, latest.id],
       );
+      expect(older.bytes, [1]);
       expect(drive.files.contains(outside), isTrue);
       expect(latest.bytes, [4]);
       expect(drive.files.contains(other), isTrue);
     },
   );
+
+  for (final name in [drivePlannerHandoffName, drivePlannerTimetableName]) {
+    test('planner retries a changed Drive revision by reading and merging again: $name', () async {
+      final file = drive.add(name, [1]);
+      final peer = StarSyncGoogleDriveTransport(
+        quotaMeter: meter,
+        apiBase: drive.base,
+        accessToken: ({bool forceRefresh = false}) async => 'token',
+      );
+      addTearDown(peer.close);
+      await transport.get(name);
+      await peer.get(name);
+      await peer.put(name, [1, 2]);
+      final priorUploads = uploadCount();
+      await expectLater(
+        transport.put(name, [1, 4]),
+        throwsA(isA<PlannerDriveConflict>()),
+      );
+      expect(uploadCount(), priorUploads);
+      expect(file.bytes, [1, 2]);
+
+      var attempts = 0;
+      await retryPlannerDriveConflict(() async {
+        final current = await transport.get(name);
+        if (++attempts == 1) {
+          await peer.get(name);
+          await peer.put(name, [1, 2, 3]);
+        }
+        await transport.put(name, [...current!.bytes, 4]);
+      });
+      expect(attempts, 2);
+      expect(file.bytes, [1, 2, 3, 4]);
+    });
+  }
+
+  test('a planner create race keeps both uploaded copies', () async {
+    const name = drivePlannerTimetableName;
+    drive.afterUpload = () async {
+      drive.add(name, [2]).modified = DateTime.utc(2027);
+    };
+    await expectLater(
+      transport.put(name, [1], createOnly: true),
+      throwsA(isA<PlannerDriveConflict>()),
+    );
+    expect(drive.files.map((file) => file.bytes), [[1], [2]]);
+    expect((await transport.get(name))?.bytes, [2]);
+    expect(drive.counts.keys.where((key) => key.startsWith('DELETE ')), isEmpty);
+  });
 
   for (final reason in ['signed out', 'switch OFF', 'account changed']) {
     test('planner guard cancels after token wait: $reason', () async {
@@ -97,7 +145,7 @@ void main() {
       );
       try {
         await expectLater(
-          guarded.put('mbg-gakujo-handoff.v1.json', [1]),
+          guarded.put(drivePlannerHandoffName, [1], createOnly: true),
           throwsStateError,
         );
         expect(uploadCount(), 0);

@@ -36,6 +36,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
   final Uri _apiBase;
   final Future<void> Function(Duration) _delay;
   final Map<String, List<_DriveFile>> _files = {};
+  final Map<String, _DriveFile> _plannerReads = {};
   final Random _random;
   bool _loaded = false;
 
@@ -51,6 +52,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     List<int> body = const [],
     int maxBytes = starSyncDefaultMaxBytes,
     void Function()? beforeSend,
+    Future<void> Function()? beforeAttempt,
   }) async {
     checkCurrent?.call();
     beforeSend?.call();
@@ -68,6 +70,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
           ? 200
           : 5;
       await _quotaMeter.charge(cost, automatic: automatic);
+      if (beforeAttempt != null) await beforeAttempt();
       final response = await starSyncRequest(
         _client,
         method,
@@ -127,7 +130,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     }
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({String? plannerName}) async {
     final found = <String, List<_DriveFile>>{};
     final seen = <String>{};
     String? token;
@@ -136,7 +139,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         'GET',
         _uri('/drive/v3/files', {
           'spaces': 'appDataFolder',
-          'q': 'trashed=false',
+          'q': plannerName == null ? 'trashed=false' : "trashed=false and name='$plannerName'",
           'pageSize': '1000',
           'fields': 'nextPageToken,incompleteSearch,files(id,name,version,md5Checksum,modifiedTime,size,createdTime,spaces)',
           'pageToken': ?token,
@@ -150,6 +153,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         final items = data['files'] as List;
         for (final item in items) {
           final file = _DriveFile.fromJson(item as Map<String, dynamic>);
+          if (plannerName != null && file.name != plannerName) continue;
           if (isPlannerInquiryName(file.name) &&
               !(item['spaces'] is List &&
                   (item['spaces'] as List).contains('appDataFolder'))) {
@@ -181,10 +185,14 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         return byTime == 0 ? a.id.compareTo(b.id) : byTime;
       });
     }
-    _files
-      ..clear()
-      ..addAll(found);
-    _loaded = true;
+    if (plannerName == null) {
+      _files
+        ..clear()
+        ..addAll(found);
+      _loaded = true;
+    } else {
+      _files[plannerName] = found[plannerName] ?? [];
+    }
   }
 
   Future<List<_DriveFile>> _lookup(String path) async {
@@ -231,7 +239,12 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     int maxBytes = starSyncDefaultMaxBytes,
   }) async {
     validateStarSyncPath(path);
-    final files = await _lookup(path);
+    final planner = isPlannerInquiryName(path);
+    if (planner) {
+      _plannerReads.remove(path);
+      await _refresh(plannerName: path);
+    }
+    final files = planner ? _files[path]! : await _lookup(path);
     if (files.isEmpty) return null;
     final file = files.first;
     final response = await _request(
@@ -244,6 +257,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       return null;
     }
     checkStarSyncStatus(response.statusCode);
+    if (planner) _plannerReads[path] = file;
     return StarSyncRemoteObject(bytes: response.bytes, etag: file.etag);
   }
 
@@ -255,10 +269,16 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     void Function()? beforeSend,
   }) async {
     validateStarSyncPath(path);
-    if (createOnly) await _refresh();
-    final files = await _lookup(path);
+    final planner = isPlannerInquiryName(path);
+    if (createOnly) await _refresh(plannerName: planner ? path : null);
+    final read = _plannerReads[path];
+    if (planner && !createOnly && read?.etag == null) throw const PlannerDriveConflict();
+    final files = planner
+        ? (createOnly ? _files[path]! : [read!])
+        : await _lookup(path);
     if (files.isNotEmpty) {
       if (createOnly) {
+        if (planner) throw const PlannerDriveConflict();
         throw const StarSyncTransportException(
           StarSyncTransportErrorKind.alreadyExists,
           'File already exists',
@@ -277,9 +297,17 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         },
         body: bytes,
         beforeSend: beforeSend,
+        beforeAttempt: planner ? () async {
+          // Compare the Drive revision again after token/quota waits and on a retry.
+          await _refresh(plannerName: path);
+          if (_files[path]!.firstOrNull?.etag != read!.etag) {
+            throw const PlannerDriveConflict();
+          }
+        } : null,
       );
       checkStarSyncStatus(response.statusCode);
       _files[path]![0] = _updatedFile(response, path, files.first);
+      if (planner) _plannerReads.remove(path);
       return;
     }
     final random = Random.secure();
@@ -310,6 +338,10 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       headers: {'content-type': 'multipart/related; boundary=$boundary'},
       body: body,
       beforeSend: beforeSend,
+      beforeAttempt: planner && createOnly ? () async {
+        await _refresh(plannerName: path);
+        if (_files[path]!.isNotEmpty) throw const PlannerDriveConflict();
+      } : null,
     );
     checkStarSyncStatus(response.statusCode);
     String id;
@@ -332,7 +364,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     }
     _files[path] = [_updatedFile(response, path, null)];
     if (createOnly) {
-      await _refresh();
+      await _refresh(plannerName: planner ? path : null);
       final current = _files[path];
       if (current == null || current.isEmpty) {
         throw const StarSyncTransportException(
@@ -341,6 +373,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         );
       }
       if (current.first.id != id) {
+        if (planner) throw const PlannerDriveConflict();
         await _deleteId(id);
         _files[path]?.removeWhere((file) => file.id == id);
         throw const StarSyncTransportException(
@@ -377,15 +410,6 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         'Invalid Google Drive response',
       );
     }
-  }
-
-  Future<void> removePlannerDuplicates() async {
-    const path = 'mbg-gakujo-handoff.v1.json';
-    final files = await _lookup(path);
-    for (final file in files.skip(1).toList()) {
-      await _deleteId(file.id);
-    }
-    if (files.isNotEmpty) _files[path] = [files.first];
   }
 
   Future<void> _deleteId(String id) async {

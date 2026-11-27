@@ -79,10 +79,12 @@ extension _CoursePlannerActions on _GakujoWebAppState {
 
     StarSyncGoogleDriveTransport? transport;
     var retryCapture = false;
+    String? captureKey;
     try {
       final storage = SecureStorageFactory.create();
       final googleAccount = starSyncAccountHash(session.email);
       final key = 'planner_drive_capture_v3_${account}_$googleAccount';
+      captureKey = key;
       final last = await storage.read(key: key);
       final now = DateTime.now().toUtc();
       final attempt = _plannerShareAttempts[key];
@@ -93,21 +95,22 @@ extension _CoursePlannerActions on _GakujoWebAppState {
               now.difference(attempt) >= const Duration(minutes: 5));
       if (!captureAllowed()) return;
       if (background) _plannerShareAttempts[key] = now;
-      transport = StarSyncGoogleDriveTransport(
+      final activeTransport = StarSyncGoogleDriveTransport(
         accessToken: session.accessToken,
         automatic: true,
         checkCurrent: checkCurrent,
       );
+      transport = activeTransport;
       // Publish the account marker before a portal request can stall.
       var timetableShare = PlannerTimetableShare.complete;
       if (student != null && background) {
-        timetableShare = await shareDrivePlannerTimetable(
-          transport: transport,
+        timetableShare = await retryPlannerDriveConflict(() => shareDrivePlannerTimetable(
+          transport: activeTransport,
           student: student,
           captured: const [],
           allowed: allowed,
           capturedAt: now,
-        );
+        ));
         if (timetableShare == PlannerTimetableShare.cancelled) return;
       }
       final displayed = await captureCoursePlannerHandoffs(
@@ -166,42 +169,44 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       final capturedAt = DateTime.now().toUtc();
       if (!captureAllowed() || (captured.isEmpty && !background && timetable.isEmpty)) return;
       if (student != null && (timetable.isNotEmpty || !background)) {
-        timetableShare = await shareDrivePlannerTimetable(
-          transport: transport,
+        timetableShare = await retryPlannerDriveConflict(() => shareDrivePlannerTimetable(
+          transport: activeTransport,
           student: student,
           captured: timetable,
           allowed: allowed,
           capturedAt: capturedAt,
-        );
+        ));
         if (timetableShare == PlannerTimetableShare.cancelled) return;
       }
       final timetablePending = timetableShare == PlannerTimetableShare.pending;
       complete &= !timetablePending;
       final success = captured.isEmpty ||
-          await shareDrivePlannerHandoffs(
-            transport: transport,
+          await retryPlannerDriveConflict(() => shareDrivePlannerHandoffs(
+            transport: activeTransport,
             captured: captured,
             allowed: allowed,
             capturedAt: capturedAt,
             preserveAcademicHistory: student != null,
-          );
+          ));
       if ((timetablePending || !success) && !retryCapture && allowed()) {
         await storage.delete(key: key);
         retryCapture = true;
       }
-      if (success && allowed()) {
-        if (captured.isNotEmpty && (!background || complete)) {
-          await transport.removePlannerDuplicates();
-        }
-        if (background && allowed() && complete) {
-          await storage.write(key: key, value: plannerTimestamp(capturedAt));
-          retryCapture = false;
-          _plannerShareRetry?.cancel();
-          _plannerShareRetry = null;
-        }
+      if (success && background && allowed() && complete) {
+        await storage.write(key: key, value: plannerTimestamp(capturedAt));
+        retryCapture = false;
+        _plannerShareRetry?.cancel();
+        _plannerShareRetry = null;
       }
     } on Object catch (error) {
       retryCapture = error is! PlannerTimetableStudentMismatch;
+      if (error is PlannerDriveConflict && captureKey != null && allowed()) {
+        try {
+          await SecureStorageFactory.create().delete(key: captureKey);
+        } on Object {
+          // A later inquiry can still retry the Drive update.
+        }
+      }
       developer.log(
         'Planner inquiry sharing skipped',
         name: 'MoreBetterGakujo',

@@ -13,6 +13,20 @@ const _plannerBindingName = 'mbg-planner-student-binding-v1';
 bool isPlannerInquiryName(String name) =>
     name == drivePlannerHandoffName || name == drivePlannerTimetableName;
 
+class PlannerDriveConflict implements Exception {
+  const PlannerDriveConflict();
+}
+
+Future<T> retryPlannerDriveConflict<T>(Future<T> Function() update) async {
+  for (var attempt = 0; ; attempt++) {
+    try {
+      return await update();
+    } on PlannerDriveConflict {
+      if (attempt == 2) rethrow;
+    }
+  }
+}
+
 String plannerTimestamp(DateTime time) => DateTime.fromMillisecondsSinceEpoch(
   time.toUtc().millisecondsSinceEpoch,
   isUtc: true,
