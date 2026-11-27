@@ -34,12 +34,13 @@ class CoursePlannerSource {
   final bool Function() stillCurrent;
   final String attempt = _attempt();
 
-  Future<Object?> _read([CoursePlannerImportKind? kind]) async {
+  Future<Object?> _read([CoursePlannerImportKind? kind, bool timetable = false]) async {
     if (!stillCurrent()) return null;
     final result = await controller.runJavaScriptReturningResult(
       coursePlannerCaptureJs({
         'attempt': attempt,
         if (kind != null) 'kind': kind.name,
+        if (timetable) 'timetable': true,
       }),
     );
     if (!stillCurrent()) return null;
@@ -64,6 +65,11 @@ class CoursePlannerSource {
 
   Future<Map<String, dynamic>?> capture(CoursePlannerImportKind kind) async =>
       _validateCoursePlannerPacket(await _read(kind), kind);
+
+  Future<Object?> captureTimetable() async {
+    if (!(await choices()).contains(CoursePlannerImportKind.registration)) return null;
+    return _read(CoursePlannerImportKind.registration, true);
+  }
 }
 
 /// The order in which handoff tokens are copied together.
@@ -81,13 +87,19 @@ const coursePlannerHandoffOrder = [
 Future<List<(CoursePlannerImportKind, String)>> fetchCoursePlannerHandoffs(
   GakujoWebViewController controller,
   bool Function() stillCurrent,
+) async => (await fetchCoursePlannerCapture(controller, stillCurrent)).$1;
+
+Future<(List<(CoursePlannerImportKind, String)>, List<Object?>)>
+fetchCoursePlannerCapture(
+  GakujoWebViewController controller,
+  bool Function() stillCurrent,
 ) async {
-  if (!stillCurrent()) return const [];
+  if (!stillCurrent()) return (const <(CoursePlannerImportKind, String)>[], const <Object?>[]);
   final result = await controller.runJavaScriptReturningResult(
     coursePlannerFetchJs,
   );
-  if (!stillCurrent()) return const [];
-  return decodeCoursePlannerFetch(result);
+  if (!stillCurrent()) return (const <(CoursePlannerImportKind, String)>[], const <Object?>[]);
+  return _decodeCoursePlannerCapture(result);
 }
 
 /// Adds any kinds offered by the displayed page that [fetched] lacks, keeping
@@ -135,23 +147,32 @@ Future<List<(CoursePlannerImportKind, String)>> supplementCoursePlannerHandoffs(
 /// One MBGPLAN1 token per kind found, in [coursePlannerHandoffOrder].
 List<(CoursePlannerImportKind, String)> decodeCoursePlannerFetch(
   Object? result,
-) {
+) => _decodeCoursePlannerCapture(result).$1;
+
+(List<(CoursePlannerImportKind, String)>, List<Object?>)
+_decodeCoursePlannerCapture(Object? result) {
   final Object? data;
   try {
     final text = _bridgeString(result, limit: 8 * 1024 * 1024);
     data = text == null ? null : jsonDecode(text);
   } on Object {
     // An unreadable reply offers nothing to copy.
-    return const [];
+    return (const [], const []);
   }
-  if (data is! Map<String, dynamic> || data['v'] != 1) return const [];
+  if (data is! Map<String, dynamic> || data['v'] != 1) {
+    return (const [], const []);
+  }
   final packets = data['packets'];
-  if (packets is! Map<String, dynamic>) return const [];
-  return [
-    for (final kind in coursePlannerHandoffOrder)
-      if (encodeCoursePlannerHandoff(packets[kind.name], kind) case final token?)
-        (kind, token),
-  ];
+  final timetable = data['timetable'];
+  return (
+    [
+      if (packets is Map<String, dynamic>)
+        for (final kind in coursePlannerHandoffOrder)
+          if (encodeCoursePlannerHandoff(packets[kind.name], kind) case final token?)
+            (kind, token),
+    ],
+    timetable is List && timetable.length <= 60 ? timetable.cast<Object?>() : const [],
+  );
 }
 
 /// The clipboard text for several handoff tokens.

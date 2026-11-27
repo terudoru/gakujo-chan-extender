@@ -8,6 +8,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart'
 
 class _Drive implements StarSyncTransport {
   List<int>? bytes;
+  final extra = <String, List<int>>{};
   int writes = 0;
   void Function()? onRead;
   @override
@@ -15,9 +16,9 @@ class _Drive implements StarSyncTransport {
     String path, {
     int maxBytes = starSyncDefaultMaxBytes,
   }) async {
-    expect(path, drivePlannerHandoffName);
     onRead?.call();
-    return bytes == null ? null : StarSyncRemoteObject(bytes: bytes!);
+    final value = path == drivePlannerHandoffName ? bytes : extra[path];
+    return value == null ? null : StarSyncRemoteObject(bytes: value);
   }
 
   @override
@@ -27,7 +28,12 @@ class _Drive implements StarSyncTransport {
     bool createOnly = false,
   }) async {
     writes++;
-    bytes = value;
+    if (path == drivePlannerHandoffName) {
+      bytes = value;
+    } else {
+      if (createOnly) expect(extra.containsKey(path), isFalse);
+      extra[path] = value;
+    }
   }
 
   @override
@@ -52,6 +58,42 @@ void main() {
       ),
   ];
   final time = DateTime.utc(2026, 11, 24);
+  test('timetable marker persists courses by term and rejects another student', () async {
+    final drive = _Drive();
+    final student = 'a' * 43;
+    List<dynamic> terms() {
+      final value = jsonDecode(utf8.decode(drive.extra[drivePlannerTimetableName]!));
+      expect(value['student'], student);
+      return value['terms'] as List;
+    }
+    Map<String, dynamic> term(String year, String semester, int day) => {
+      'year': year,
+      'semester': semester,
+      'meetings': [
+        {'code': '${year.substring(2)}0H1002', 'title': '心理・人間学入門',
+          'status': '許可', 'day': day, 'period': 3},
+      ],
+    };
+    Future<bool> shareTerms(List<Object?> captured, {String? owner, int days = 0}) =>
+        shareDrivePlannerTimetable(
+          transport: drive,
+          student: owner ?? student,
+          captured: captured,
+          allowed: () => true,
+          capturedAt: time.add(Duration(days: days)),
+        );
+    expect(await shareTerms([]), isTrue);
+    expect(terms(), isEmpty);
+    expect(await shareTerms([term('2025', 'second', 2), term('2026', 'first', 4)], days: 1), isTrue);
+    expect(await shareTerms([term('2026', 'first', 3)], days: 2), isTrue);
+    expect(await shareTerms([term('2026', 'first', 5)], days: 1), isTrue);
+    expect(terms().map((term) => term['meetings'][0]['day']), [2, 3]);
+    expect(drive.writes, 3);
+    await expectLater(shareTerms([], owner: 'b' * 43), throwsA(isA<PlannerTimetableStudentMismatch>()));
+    await expectLater(shareTerms([term('2025', 'second', 8)], days: 3), throwsFormatException);
+    expect(drive.writes, 3);
+  });
+
   Future<bool> share(
     _Drive drive, {
     List<(CoursePlannerImportKind, String)>? packets,

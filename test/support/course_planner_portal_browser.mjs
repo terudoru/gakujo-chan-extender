@@ -209,6 +209,12 @@ try {
     ],
   });
   assert.doesNotMatch(JSON.stringify(packet), /private|非公開|https?:|削除/);
+  const directTimetable = await ask({kind:"registration", timetable:true});
+  assert.deepEqual(directTimetable, {year:"2026", semester:"first", meetings:[
+    {code:"261G7011", title:"合成の授業", status:"申請中", day:2, period:3},
+    {code:"261G7012", title:"合成の授業", status:"許可", day:2, period:3},
+    {code:"261G7013", title:"合成の授業", status:"要確認", day:2, period:3},
+  ]});
   delayed.set(
     url,
     '<table><tr><td>履修登録・登録状況照会</td></tr></table><iframe src="' +
@@ -421,11 +427,19 @@ try {
     '<a href="/campusweb/campussquare.do?_flowId=SIW0001300-flow&amp;_eventId=search&amp;gakkiKbnCode=2&amp;nendo=2025">別の照会</a>');
   delayed.set(oldRegUrl, sem2Html.replaceAll("2026年度", "2025年度").replaceAll("'2026'", "'2025'").replaceAll("261G", "251G"));
   requests.length = 0;
-  const combined = (await runFetch()).packets.registration;
+  const history = await runFetch();
+  const combined = history.packets.registration;
   assert.equal(combined.year, undefined);
   assert.deepEqual(combined.tables.filter(table => table.heading === "不許可となった科目").map(table => table.rows[1].slice(0, 2)),
     [["2026", "261G7020"], ["2025", "251G7020"]]);
   assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, regSem2Url, oldRegUrl]);
+  assert.deepEqual(history.timetable.map(term => [term.year, term.semester]), [
+    ["2026", "first"], ["2026", "second"], ["2025", "second"],
+  ]);
+  assert.deepEqual(history.timetable[2].meetings, [
+    {code:"251G7099", title:"合成後期", status:"許可", day:2, period:3},
+  ]);
+  assert.doesNotMatch(JSON.stringify(history.timetable), /非公開|教室|不許可/);
   delayed.set(regFlowUrl, sem1Html);
 
   const studentUrl = portal + "campussquare.do?_flowId=TestStudentInquiry-flow";

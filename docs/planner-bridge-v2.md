@@ -41,13 +41,14 @@ owner's `permissionId`, fetched from `about.user` and cached only for that nativ
 auth generation; an old lookup cannot identify a replacement account.
 Sign-in and sign-out replies are delivered before their queued session events.
 
-Drive listing is restricted to `appDataFolder` and a `mbg-planner-` prefix, with
-one exact-name exception: `mbg-gakujo-handoff.v1.json` is available to list/read
-only. Listing it requires `{nameExact: "mbg-gakujo-handoff.v1.json"}`; prefix
-queries for that name and requests with both selectors are rejected. Planner
-prefix queries never include the handoff. Its exact list result includes
-`mimeType`, `spaces`, and `modifiedTime`. The bridge cannot create or delete that
-handoff, including through previously unlisted IDs. Read
+Drive listing is restricted to `appDataFolder` and a `mbg-planner-` prefix.
+`mbg-gakujo-handoff.v1.json` and `mbg-gakujo-timetable.v1.json` are available
+through `nameExact` and file reads. The host advertises `gakujo-timetable` in
+`hello` when it supports the timetable file. Prefix queries exclude both files,
+and requests with both selectors are rejected. Exact list results include
+`mimeType`, `spaces`, `modifiedTime`, and the Drive `incompleteSearch` flag.
+The bridge rejects create and delete operations on either file, including
+previously unlisted IDs. Read
 and delete fetch metadata first, verify `spaces` includes `appDataFolder`, then
 check names. Create/delete use the three fixed names or the exact snapshot
 pattern, including UUID v4 variant bits; UTF-8 bodies are limited to 4 MiB. Native

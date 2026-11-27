@@ -3,6 +3,23 @@ part of 'gakujo_web_app.dart';
 enum _PlannerDestination { clipboard, registrationClipboard }
 
 extension _CoursePlannerActions on _GakujoWebAppState {
+  String? _confirmedPlannerStudentScope() {
+    final id = _appSettings.savedLoginId;
+    final account = _activeLoginAccount;
+    if (!_loginIdentity.pageConfirmed || account == null) return null;
+    return _plannerStudentScopes[account] ??
+        (starSyncAccountHash(id) == account
+            ? plannerStudentScope(id?.trim())
+            : null);
+  }
+
+  void _retryPlannerSharing() {
+    _plannerShareRetry ??= Timer(const Duration(minutes: 5), () {
+      _plannerShareRetry = null;
+      unawaited(_autoSharePlannerResults());
+    });
+  }
+
   Future<void> _loadPlannerSharing() async {
     try {
       final value = await SecureStorageFactory.create().read(
@@ -32,6 +49,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
     }
     _plannerShareBusy = true;
     final account = _activeLoginAccount!;
+    final student = _confirmedPlannerStudentScope();
     final revision = _loginIdentity.revision;
     final epoch = _plannerShareEpoch;
     final navigation = _navigationRevision;
@@ -62,24 +80,55 @@ extension _CoursePlannerActions on _GakujoWebAppState {
     StarSyncGoogleDriveTransport? transport;
     try {
       final storage = SecureStorageFactory.create();
-      final key = 'planner_drive_last_success_$account';
+      final googleAccount = starSyncAccountHash(session.email);
+      final key = 'planner_drive_capture_v2_${account}_$googleAccount';
       final last = await storage.read(key: key);
       final now = DateTime.now().toUtc();
-      final attempt = _plannerShareAttempts[account];
+      final attempt = _plannerShareAttempts[key];
       final background =
           plannerCaptureDue(last, now) &&
           (attempt == null ||
               now.difference(attempt) >= const Duration(minutes: 5));
       if (!captureAllowed()) return;
-      if (background) _plannerShareAttempts[account] = now;
+      if (background) _plannerShareAttempts[key] = now;
+      transport = StarSyncGoogleDriveTransport(
+        accessToken: session.accessToken,
+        automatic: true,
+        checkCurrent: checkCurrent,
+      );
+      // Publish the account marker before a portal request can stall.
+      if (student != null && background &&
+          !await shareDrivePlannerTimetable(
+            transport: transport,
+            student: student,
+            captured: const [],
+            allowed: allowed,
+            capturedAt: now,
+          )) {
+        return;
+      }
       final displayed = await captureCoursePlannerHandoffs(
         _controller,
         captureAllowed,
         background: false,
       );
-      final fetched = background
-          ? await captureCoursePlannerHandoffs(_controller, captureAllowed)
-          : const <(CoursePlannerImportKind, String)>[];
+      final displayedTimetable =
+          student != null && displayed.any((entry) => entry.$1 == CoursePlannerImportKind.registration)
+          ? await CoursePlannerSource(_controller, captureAllowed).captureTimetable()
+          : null;
+      var fetched = const <(CoursePlannerImportKind, String)>[];
+      var fetchedTimetable = const <Object?>[];
+      if (background) {
+        try {
+          (fetched, fetchedTimetable) = await fetchCoursePlannerCapture(_controller, captureAllowed);
+        } on Object {
+          // The displayed inquiry is still available while the portal retries.
+        }
+      }
+      final timetable = {
+        for (final term in [...fetchedTimetable, displayedTimetable])
+          if (term is Map<String, dynamic>) (term['year'], term['semester']): term,
+      }.values.toList();
       // The displayed inquiry is the source for its kinds, even when a login
       // capture is also due. Keep fetched kinds that are absent from this page.
       final byKind = <CoursePlannerImportKind, String>{
@@ -95,25 +144,38 @@ extension _CoursePlannerActions on _GakujoWebAppState {
           if (byKind[kind] case final token?) (kind, token),
       ];
       final capturedAt = DateTime.now().toUtc();
-      if (!captureAllowed() || captured.isEmpty) return;
-      transport = StarSyncGoogleDriveTransport(
-        accessToken: session.accessToken,
-        automatic: true,
-        checkCurrent: checkCurrent,
-      );
-      final success = await shareDrivePlannerHandoffs(
-        transport: transport,
-        captured: captured,
-        allowed: allowed,
-        capturedAt: capturedAt,
-      );
+      if (!captureAllowed() || (captured.isEmpty && !background && timetable.isEmpty)) return;
+      if (student != null && (timetable.isNotEmpty || !background) &&
+          !await shareDrivePlannerTimetable(
+            transport: transport,
+            student: student,
+            captured: timetable,
+            allowed: allowed,
+            capturedAt: capturedAt,
+          )) {
+        return;
+      }
+      final success = captured.isNotEmpty &&
+          await shareDrivePlannerHandoffs(
+            transport: transport,
+            captured: captured,
+            allowed: allowed,
+            capturedAt: capturedAt,
+          );
       if (success && allowed()) {
         await transport.removePlannerDuplicates();
-        if (background && allowed()) {
+        if (background && allowed() && (student == null || timetable.isNotEmpty)) {
           await storage.write(key: key, value: plannerTimestamp(capturedAt));
+          _plannerShareRetry?.cancel();
+          _plannerShareRetry = null;
+        } else if (background && allowed()) {
+          _retryPlannerSharing();
         }
+      } else if (background && allowed()) {
+        _retryPlannerSharing();
       }
-    } on Object {
+    } on Object catch (error) {
+      if (allowed() && error is! PlannerTimetableStudentMismatch) _retryPlannerSharing();
       developer.log(
         'Planner inquiry sharing skipped',
         name: 'MoreBetterGakujo',
@@ -137,6 +199,8 @@ extension _CoursePlannerActions on _GakujoWebAppState {
     _plannerShareEpoch++;
     _plannerShareDeleting = true;
     _plannerSharePending = false;
+    _plannerShareRetry?.cancel();
+    _plannerShareRetry = null;
     StarSyncGoogleDriveTransport? transport;
     try {
       final session = StarSyncGoogleAuthSession(
@@ -148,6 +212,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         checkCurrent: session.checkCurrent,
       );
       await transport.delete(drivePlannerHandoffName);
+      await transport.delete(drivePlannerTimetableName);
       if (mounted) {
         _showSnackBar('共有した照会結果を削除しました。自動共有がオンの場合は次の照会で再び共有されます');
       }

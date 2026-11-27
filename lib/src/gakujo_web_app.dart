@@ -2295,6 +2295,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void dispose() {
     _desktopZoomSaveTimer?.cancel();
     _notificationConsumer.dispose();
+    _plannerShareRetry?.cancel();
     _notificationHistoryAccount.dispose();
     _registrationSession?.timer?.cancel();
     _cancelDriveUploads();
@@ -2438,6 +2439,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _plannerShareDeleting = false;
   int _plannerShareEpoch = 0;
   final Map<String, DateTime> _plannerShareAttempts = {};
+  Timer? _plannerShareRetry;
   final _plannerStudentScopes = <String, String>{};
 
   void _submitLoginAccount(String account) {
@@ -6130,13 +6132,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => HostedPlannerPage(
           service: _webViewService,
           auth: _starSyncGoogleAuth,
-          student: () {
-            final id = _appSettings.savedLoginId;
-            final account = _activeLoginAccount;
-            if (!_loginIdentity.pageConfirmed || account == null) return null;
-            return _plannerStudentScopes[account] ??
-                (starSyncAccountHash(id) == account ? plannerStudentScope(id?.trim()) : null);
-          },
+          student: _confirmedPlannerStudentScope,
           signIn: () async {
             await _driveDownloadQueue.runExclusive(() async {
               final config = _starSyncEngine.config;

@@ -38,7 +38,7 @@ bool isPlannerWritableName(String name) =>
     (_plannerName.hasMatch(name) && !name.endsWith('\n'));
 
 bool isPlannerReadableName(String name) =>
-    name.startsWith('mbg-planner-') || name == drivePlannerHandoffName;
+    name.startsWith('mbg-planner-') || isPlannerInquiryName(name);
 
 class PlannerBridgeException implements Exception {
   const PlannerBridgeException(this.code);
@@ -243,7 +243,7 @@ class PlannerBroker {
       case 'hello':
         return {
           'version': 2,
-          'capabilities': ['drive-appdata', 'native-sign-in'],
+          'capabilities': ['drive-appdata', 'native-sign-in', plannerTimetableCapability],
           'sessionGeneration': generation,
           'session': session,
         };
@@ -293,7 +293,7 @@ class PlannerBroker {
           }
           final selector = string(exact ? 'nameExact' : 'namePrefix');
           if ((exact
-                  ? selector != drivePlannerHandoffName
+                  ? !isPlannerInquiryName(selector)
                   : !selector.startsWith('mbg-planner-')) ||
               selector.length > 1024 ||
               (args['pageToken'] != null && args['pageToken'] is! String)) {

@@ -7,6 +7,8 @@ export type AcademicKind = "grades" | "registration" | "balances";
 export type Kind = AcademicKind | "profile";
 export type Table = { heading: string; rows: string[][] };
 export type Packet = { v: 1; kind: Kind; tables: Table[]; year?: string };
+type Meeting = {code: string; title: string; status: string; day: number; period: number};
+export type TimetableSnapshot = {year: string; semester: "first" | "second"; meetings: Meeting[]};
 
 export type View = {
   /** The page address; a parsed document does not carry its own. */
@@ -405,15 +407,14 @@ export function extractor(view: View) {
   // The university's 履修科目の登録 manual, p.9, identifies undecided
   // entries by the red question mark and permitted entries by a blue number.
   // Timetable CELL backgrounds describe term length, never permission.
-  function timetable(doc: Document): Table | null {
-    const rows = [["年度", "開講番号", "科目名", "登録状況"]];
-    const seen = new Set<string>();
+  function registrationMeetings(doc: Document) {
+    const meetings: (Meeting & {year: string})[] = [];
     for (const link of Array.from(
       doc.querySelectorAll<HTMLAnchorElement>('table a[onclick*="CallDetail("]'),
     )) {
       if (!visible(link)) continue;
       const args = (link.getAttribute("onclick") || "").match(
-        /\bCallDetail\(\s*'(\d{4})'\s*,\s*'[A-Za-z0-9]+'\s*,\s*'(\d{3}[A-Z][A-Z0-9]{4,5})'\s*,\s*'[1-7]'\s*,\s*'[1-7]'\s*\)/,
+        /\bCallDetail\(\s*'(\d{4})'\s*,\s*'[A-Za-z0-9]+'\s*,\s*'(\d{3}[A-Z][A-Z0-9]{4,5})'\s*,\s*'([1-7])'\s*,\s*'([1-7])'\s*\)/,
       );
       if (!args) continue;
       let shown = leaf(link);
@@ -440,7 +441,16 @@ export function extractor(view: View) {
         parts.length >= 3
           ? safeText(normalized(parts[0]).replace(/[◆◇]+$/, ""))
           : "";
-      const row = [args[1], args[2], title, status];
+      meetings.push({year:args[1], code:args[2], title, status, day:Number(args[3]), period:Number(args[4])});
+    }
+    return meetings;
+  }
+
+  function timetable(doc: Document): Table | null {
+    const rows = [["年度", "開講番号", "科目名", "登録状況"]];
+    const seen = new Set<string>();
+    for (const {year, code, title, status} of registrationMeetings(doc)) {
+      const row = [year, code, title, status];
       const key = JSON.stringify(row);
       if (!seen.has(key)) {
         seen.add(key);
@@ -448,6 +458,35 @@ export function extractor(view: View) {
       }
     }
     return rows.length > 1 ? { heading: names.registration, rows } : null;
+  }
+
+  function registrationTerm(doc: Document) {
+    const scopes = new Map<string, Pick<TimetableSnapshot, "year" | "semester">>();
+    for (const cell of Array.from(doc.querySelectorAll("th,td"))) {
+      if (label(cell) !== "年度・学期" || !visible(cell)) continue;
+      const value = cell.nextElementSibling;
+      if (!value || !visible(value)) continue;
+      const found = /^((?:19|20)\d{2})年度\s*第?([12一二])学期$/.exec(leaf(value));
+      if (!found) continue;
+      const year = found[1];
+      const semester = ["1", "一"].includes(found[2]) ? "first" : "second";
+      scopes.set(year + semester, {year, semester});
+    }
+    return scopes.size === 1 ? scopes.values().next().value : undefined;
+  }
+
+  function timetableSnapshot(doc: Document): TimetableSnapshot | null {
+    const term = registrationTerm(doc);
+    if (!term) return null;
+    const slots = new Map<string, Meeting>();
+    for (const {year, ...meeting} of registrationMeetings(doc)) {
+      if (year !== term.year || !meeting.code.startsWith(year.slice(-2))) return null;
+      const key = `${meeting.code}/${meeting.day}/${meeting.period}`;
+      const previous = slots.get(key);
+      if (previous && (previous.status !== meeting.status || previous.title !== meeting.title)) return null;
+      slots.set(key, meeting);
+    }
+    return slots.size ? {...term, meetings:[...slots.values()]} : null;
   }
   function admissionYear(root: ParentNode) {
     const years = new Set<string>();
@@ -531,16 +570,7 @@ export function extractor(view: View) {
     if (grid) tables.unshift(grid);
     if (!withinBounds(tables)) return null;
     // Scope denied rows to the official selected year too, when explicitly shown.
-    const years = new Set<string>();
-    if (kind === "registration")
-      for (const cell of Array.from(doc.querySelectorAll("th,td"))) {
-        if (label(cell) !== "年度・学期" || !visible(cell)) continue;
-        const year = leaf(cell.nextElementSibling).match(
-          /^(\d{4})年度\s*第?[12一二]学期$/,
-        )?.[1];
-        if (year) years.add(year);
-      }
-    const year = years.size === 1 ? Array.from(years)[0] : undefined;
+    const year = kind === "registration" ? registrationTerm(doc)?.year : undefined;
     return {
       v: 1,
       kind,
@@ -553,7 +583,7 @@ export function extractor(view: View) {
       ...(year ? { year } : {}),
     };
   }
-  return { visible, pageKinds, academicTables, profile, admissionYear, packet };
+  return { visible, pageKinds, academicTables, profile, admissionYear, packet, timetableSnapshot };
 }
 
 export function withinBounds(tables: Table[]) {

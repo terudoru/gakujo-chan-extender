@@ -1,6 +1,6 @@
 import { extractor, liveView, names, origin, type Kind } from "./extract.js";
 
-declare const __mbgConfig: { attempt: string; kind?: Kind };
+declare const __mbgConfig: { attempt: string; kind?: Kind; timetable?: boolean };
 type SourceDocument = Document & {
   __mbgPlannerSource?: {
     attempt: string;
@@ -9,7 +9,7 @@ type SourceDocument = Document & {
   };
 };
 
-const { visible, pageKinds, academicTables, packet } = extractor(liveView);
+const { visible, pageKinds, academicTables, packet, timetableSnapshot } = extractor(liveView);
 
 function sourceDocuments(doc: SourceDocument, found: SourceDocument[]) {
   if (
@@ -70,6 +70,6 @@ function capture() {
     owner.tables.some((t) => !t.isConnected)
   )
     return null;
-  return packet(doc, kind, current);
+  return __mbgConfig.timetable ? (kind === "registration" ? timetableSnapshot(doc) : null) : packet(doc, kind, current);
 }
 __mbgEntryResult = JSON.stringify(capture());

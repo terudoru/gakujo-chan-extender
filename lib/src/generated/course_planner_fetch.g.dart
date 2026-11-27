@@ -318,15 +318,14 @@ const String coursePlannerFetchJs = r'''
       }
       return rows.length > 1 ? { heading: denied ? rejected : names[kind], rows } : null;
     }
-    function timetable(doc) {
-      const rows = [["年度", "開講番号", "科目名", "登録状況"]];
-      const seen = /* @__PURE__ */ new Set();
+    function registrationMeetings(doc) {
+      const meetings = [];
       for (const link of Array.from(
         doc.querySelectorAll('table a[onclick*="CallDetail("]')
       )) {
         if (!visible(link)) continue;
         const args = (link.getAttribute("onclick") || "").match(
-          /\bCallDetail\(\s*'(\d{4})'\s*,\s*'[A-Za-z0-9]+'\s*,\s*'(\d{3}[A-Z][A-Z0-9]{4,5})'\s*,\s*'[1-7]'\s*,\s*'[1-7]'\s*\)/
+          /\bCallDetail\(\s*'(\d{4})'\s*,\s*'[A-Za-z0-9]+'\s*,\s*'(\d{3}[A-Z][A-Z0-9]{4,5})'\s*,\s*'([1-7])'\s*,\s*'([1-7])'\s*\)/
         );
         if (!args) continue;
         let shown = leaf(link);
@@ -340,7 +339,15 @@ const String coursePlannerFetchJs = r'''
         const next = br == null ? void 0 : br.nextSibling;
         const parts = (br == null ? void 0 : br.tagName) === "BR" && (next == null ? void 0 : next.nodeType) === 3 ? (next.textContent || "").split(" ") : [];
         const title = parts.length >= 3 ? safeText(normalized(parts[0]).replace(/[◆◇]+$/, "")) : "";
-        const row = [args[1], args[2], title, status];
+        meetings.push({ year: args[1], code: args[2], title, status, day: Number(args[3]), period: Number(args[4]) });
+      }
+      return meetings;
+    }
+    function timetable(doc) {
+      const rows = [["年度", "開講番号", "科目名", "登録状況"]];
+      const seen = /* @__PURE__ */ new Set();
+      for (const { year, code, title, status } of registrationMeetings(doc)) {
+        const row = [year, code, title, status];
         const key = JSON.stringify(row);
         if (!seen.has(key)) {
           seen.add(key);
@@ -348,6 +355,34 @@ const String coursePlannerFetchJs = r'''
         }
       }
       return rows.length > 1 ? { heading: names.registration, rows } : null;
+    }
+    function registrationTerm(doc) {
+      const scopes = /* @__PURE__ */ new Map();
+      for (const cell of Array.from(doc.querySelectorAll("th,td"))) {
+        if (label(cell) !== "年度・学期" || !visible(cell)) continue;
+        const value = cell.nextElementSibling;
+        if (!value || !visible(value)) continue;
+        const found = /^((?:19|20)\d{2})年度\s*第?([12一二])学期$/.exec(leaf(value));
+        if (!found) continue;
+        const year = found[1];
+        const semester = ["1", "一"].includes(found[2]) ? "first" : "second";
+        scopes.set(year + semester, { year, semester });
+      }
+      return scopes.size === 1 ? scopes.values().next().value : void 0;
+    }
+    function timetableSnapshot(doc) {
+      const term = registrationTerm(doc);
+      if (!term) return null;
+      const slots = /* @__PURE__ */ new Map();
+      for (const _a of registrationMeetings(doc)) {
+        const _b = _a, { year } = _b, meeting = __objRest(_b, ["year"]);
+        if (year !== term.year || !meeting.code.startsWith(year.slice(-2))) return null;
+        const key = `${meeting.code}/${meeting.day}/${meeting.period}`;
+        const previous = slots.get(key);
+        if (previous && (previous.status !== meeting.status || previous.title !== meeting.title)) return null;
+        slots.set(key, meeting);
+      }
+      return slots.size ? __spreadProps(__spreadValues({}, term), { meetings: [...slots.values()] }) : null;
     }
     function admissionYear(root) {
       var _a, _b, _c, _d, _e;
@@ -416,16 +451,7 @@ const String coursePlannerFetchJs = r'''
       const grid = kind === "registration" ? timetable(doc) : null;
       if (grid) tables.unshift(grid);
       if (!withinBounds(tables)) return null;
-      const years = /* @__PURE__ */ new Set();
-      if (kind === "registration")
-        for (const cell of Array.from(doc.querySelectorAll("th,td"))) {
-          if (label(cell) !== "年度・学期" || !visible(cell)) continue;
-          const year2 = (_a = leaf(cell.nextElementSibling).match(
-            /^(\d{4})年度\s*第?[12一二]学期$/
-          )) == null ? void 0 : _a[1];
-          if (year2) years.add(year2);
-        }
-      const year = years.size === 1 ? Array.from(years)[0] : void 0;
+      const year = kind === "registration" ? (_a = registrationTerm(doc)) == null ? void 0 : _a.year : void 0;
       return __spreadValues({
         v: 1,
         kind,
@@ -435,7 +461,7 @@ const String coursePlannerFetchJs = r'''
         }) : tables
       }, year ? { year } : {});
     }
-    return { visible, pageKinds, academicTables, profile, admissionYear, packet };
+    return { visible, pageKinds, academicTables, profile, admissionYear, packet, timetableSnapshot };
   }
   function withinBounds(tables) {
     return tables.length > 0 && tables.length <= 50 && tables.reduce((n, t) => n + t.rows.length, 0) <= 6e3;
@@ -579,11 +605,21 @@ const String coursePlannerFetchJs = r'''
     }
     const packets = {};
     const registration = [];
+    const timetable = /* @__PURE__ */ new Map();
     const tableKeys = /* @__PURE__ */ new Set();
     const years = /* @__PURE__ */ new Set();
     let yearless = false;
     for (const page of pages) {
-      const { pageKinds, packet } = extractor(staticView(page.href));
+      const { pageKinds, packet, timetableSnapshot } = extractor(staticView(page.href));
+      if (page.source === "registration") {
+        const snapshot = timetableSnapshot(page.doc);
+        if (snapshot) {
+          const key = snapshot.year + snapshot.semester;
+          const previous = timetable.get(key);
+          if (previous === void 0) timetable.set(key, snapshot);
+          else if (JSON.stringify(previous) !== JSON.stringify(snapshot)) timetable.set(key, null);
+        }
+      }
       for (const kind of pageKinds(page.doc)) {
         if ((kind === "grades" || kind === "registration") && kind !== page.source)
           continue;
@@ -626,7 +662,7 @@ const String coursePlannerFetchJs = r'''
     }
     const ordered = {};
     for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
-    return { v: 1, packets: ordered };
+    return { v: 1, packets: ordered, timetable: [...timetable.values()].filter((value) => value !== null) };
   }
   function run() {
     try {

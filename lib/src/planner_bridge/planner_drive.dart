@@ -85,7 +85,7 @@ class NativePlannerDrive implements PlannerDrive {
     bool exact = false,
   }) async {
     if (exact
-        ? prefix != drivePlannerHandoffName
+        ? !isPlannerInquiryName(prefix)
         : !prefix.startsWith('mbg-planner-')) {
       throw const PlannerBridgeException('forbidden');
     }
@@ -99,9 +99,9 @@ class NativePlannerDrive implements PlannerDrive {
           query: {
             'spaces': 'appDataFolder',
             'q': exact
-                ? "trashed = false and name = '$drivePlannerHandoffName'"
+                ? "trashed = false and name = '$prefix'"
                 : "trashed = false and name contains 'mbg-planner-'",
-            'fields': 'nextPageToken,files(id,name,createdTime,appProperties,mimeType,spaces,modifiedTime)',
+            'fields': 'nextPageToken,incompleteSearch,files(id,name,createdTime,appProperties,mimeType,spaces,modifiedTime)',
             'pageSize': '1000',
             'pageToken': ?pageToken,
           },
@@ -112,11 +112,12 @@ class NativePlannerDrive implements PlannerDrive {
       'files': (data['files'] as List)
           .where(
             (f) => exact
-                ? f['name'] == drivePlannerHandoffName
+                ? f['name'] == prefix
                 : (f['name'] as String).startsWith(prefix),
           )
           .toList(),
       'nextPageToken': ?data['nextPageToken'],
+      'incompleteSearch': ?data['incompleteSearch'],
     };
   }
 

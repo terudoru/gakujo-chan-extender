@@ -240,6 +240,9 @@ void main() {
           if (request['args']['fileId'] == 'synthetic-handoff') {
             drive.fileName = fixture['names']['acceptForRead'][0] as String;
           }
+          if (request['args']['fileId'] == 'synthetic-timetable') {
+            drive.fileName = fixture['names']['acceptForRead'][1] as String;
+          }
         }
         final result = await broker.handle(
           request,
@@ -378,6 +381,18 @@ void main() {
       expect(drive.deleted, ['synthetic-file']);
     },
   );
+  test('timetable capability gives the web view exact read-only access', () async {
+    const name = 'mbg-gakujo-timetable.v1.json';
+    drive.fileName = name;
+    final hello = (await call('hello'))['result'] as Map;
+    expect(hello['capabilities'], contains('gakujo-timetable'));
+    expect((await call('drive.list', {'nameExact': name}))['ok'], true);
+    expect((await call('drive.read', {'fileId': 'timetable'}))['ok'], true);
+    expect((await call('drive.list', {'namePrefix': name}))['error']['code'], 'forbidden');
+    expect((await call('drive.create', {'name': name, 'text': '{}'}))['error']['code'], 'forbidden');
+    expect((await call('drive.delete', {'fileId': 'timetable'}))['error']['code'], 'forbidden');
+  });
+
   test('handoff is reachable only by exact name and is read-only', () async {
     const name = 'mbg-gakujo-handoff.v1.json';
     drive.fileName = name;

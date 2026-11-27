@@ -10,6 +10,7 @@ import {
   type Kind,
   type Packet,
   type Table,
+  type TimetableSnapshot,
 } from "./extract.js";
 
 // Reads the inquiry pages in the background so the student need not open
@@ -189,11 +190,21 @@ function fetchInquiries() {
 
   const packets: Partial<Record<Kind, Packet>> = {};
   const registration: Table[] = [];
+  const timetable = new Map<string, TimetableSnapshot | null>();
   const tableKeys = new Set<string>();
   const years = new Set<string>();
   let yearless = false;
   for (const page of pages) {
-    const { pageKinds, packet } = extractor(staticView(page.href));
+    const { pageKinds, packet, timetableSnapshot } = extractor(staticView(page.href));
+    if (page.source === "registration") {
+      const snapshot = timetableSnapshot(page.doc);
+      if (snapshot) {
+        const key = snapshot.year + snapshot.semester;
+        const previous = timetable.get(key);
+        if (previous === undefined) timetable.set(key, snapshot);
+        else if (JSON.stringify(previous) !== JSON.stringify(snapshot)) timetable.set(key, null);
+      }
+    }
     for (const kind of pageKinds(page.doc)) {
       if (
         (kind === "grades" || kind === "registration") &&
@@ -243,7 +254,7 @@ function fetchInquiries() {
   }
   const ordered: Partial<Record<Kind, Packet>> = {};
   for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
-  return { v: 1, packets: ordered };
+  return { v: 1, packets: ordered, timetable:[...timetable.values()].filter(value => value !== null) };
 }
 
 function run() {

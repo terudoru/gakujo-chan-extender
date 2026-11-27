@@ -16,7 +16,8 @@
           "version": 2,
           "capabilities": [
             "drive-appdata",
-            "native-sign-in"
+            "native-sign-in",
+            "gakujo-timetable"
           ],
           "sessionGeneration": 1,
           "session": {
@@ -206,6 +207,52 @@
           "text": "{\"v\":1,\"kind\":\"mbg-gakujo-handoff\",\"updatedAt\":\"2026-11-24T00:00:00.000Z\",\"packets\":[{\"kind\":\"profile\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoicHJvZmlsZSIsInRhYmxlcyI6W3siaGVhZGluZyI6IuWtpueUn-aJgOWxniIsInJvd3MiOltbIuaJgOWxniIsIuWtpuW5tCJdLFsi55CG5a2m6YOo54mp55CG5a2m56eRIiwiMiJdXX1dfQ\"},{\"kind\":\"grades\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoiZ3JhZGVzIiwidGFibGVzIjpbeyJoZWFkaW5nIjoi5Y2Y5L2N5L-u5b6X54q25rOB54Wn5LyaIiwicm93cyI6W1si6ZaL6Kyb55Wq5Y-3Iiwi56eR55uu5ZCNIiwi5Y2Y5L2N5pWwIiwi6KmV5L6hIiwi5bm05bqmIl0sWyIyNjlHOTAwMSIsIuWQiOaIkOWKm-WtpiIsIjIiLCLlhKoiLCIyMDI2Il1dfV19\"},{\"kind\":\"balances\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoiYmFsYW5jZXMiLCJ0YWJsZXMiOlt7ImhlYWRpbmciOiLlsaXkv67np5Hnm67norroqo3ooagiLCJyb3dzIjpbWyLnp5Hnm67ljLrliIYiLCLml6Lkv67lvpfljZjkvY3mlbAiXSxbIuaVmemkiuaVmeiCsuOBq-mWouOBmeOCi-enkeebriIsIjEwLjUiXV19XX0\"},{\"kind\":\"registration\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoicmVnaXN0cmF0aW9uIiwidGFibGVzIjpbeyJoZWFkaW5nIjoi5bGl5L-u55m76Yyy44O755m76Yyy54q25rOB54Wn5LyaIiwicm93cyI6W1si6ZaL6Kyb55Wq5Y-3Iiwi55m76Yyy54q25rOBIl0sWyIyNjlHOTAwMSIsIueUs-iri-S4rSJdLFsiMjY5RzkwMDIiLCLoqLHlj68iXV19XSwieWVhciI6IjIwMjYifQ\"}]}"
         }
       }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.list",
+        "args": {
+          "nameExact": "mbg-gakujo-timetable.v1.json"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "files": [
+            {
+              "id": "synthetic-timetable",
+              "name": "mbg-gakujo-timetable.v1.json",
+              "mimeType": "application/json",
+              "spaces": [
+                "appDataFolder"
+              ],
+              "modifiedTime": "2026-11-24T00:00:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.read",
+        "args": {
+          "fileId": "synthetic-timetable"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "text": "{\"v\":1,\"kind\":\"mbg-gakujo-timetable\",\"student\":\"gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8\",\"terms\":[{\"year\":\"2025\",\"semester\":\"second\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"meetings\":[{\"code\":\"250H1002\",\"title\":\"心理・人間学入門\",\"status\":\"許可\",\"day\":2,\"period\":3}]}]}"
+        }
+      }
     }
   ],
   "sessionEvents": [
@@ -275,14 +322,16 @@
       "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.private.00000000-0000-4000-8000-000000000001"
     ],
     "acceptForRead": [
-      "mbg-gakujo-handoff.v1.json"
+      "mbg-gakujo-handoff.v1.json",
+      "mbg-gakujo-timetable.v1.json"
     ],
     "rejectForRead": [
       "mbg-gakujo-handoff.v1.json.extra",
       "mbg-gakujo-other.v1.json"
     ],
     "rejectForWrite": [
-      "mbg-gakujo-handoff.v1.json"
+      "mbg-gakujo-handoff.v1.json",
+      "mbg-gakujo-timetable.v1.json"
     ]
   },
   "errors": [

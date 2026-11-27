@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import '../drive_planner_handoff.dart';
 import 'star_sync_quota_meter.dart';
 import 'star_sync_transport.dart';
 
@@ -137,7 +138,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
           'spaces': 'appDataFolder',
           'q': 'trashed=false',
           'pageSize': '1000',
-          'fields': 'nextPageToken,files(id,name,version,md5Checksum,modifiedTime,size,createdTime,spaces)',
+          'fields': 'nextPageToken,incompleteSearch,files(id,name,version,md5Checksum,modifiedTime,size,createdTime,spaces)',
           'pageToken': ?token,
         }),
       );
@@ -145,10 +146,11 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       try {
         final data =
             jsonDecode(utf8.decode(response.bytes)) as Map<String, dynamic>;
+        if (data['incompleteSearch'] == true) throw const FormatException();
         final items = data['files'] as List;
         for (final item in items) {
           final file = _DriveFile.fromJson(item as Map<String, dynamic>);
-          if (file.name == 'mbg-gakujo-handoff.v1.json' &&
+          if (isPlannerInquiryName(file.name) &&
               !(item['spaces'] is List &&
                   (item['spaces'] as List).contains('appDataFolder'))) {
             continue;
@@ -173,7 +175,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     } while (token != null);
     for (final files in found.values) {
       files.sort((a, b) {
-        final byTime = a.name == 'mbg-gakujo-handoff.v1.json'
+        final byTime = isPlannerInquiryName(a.name)
             ? (b.modified ?? b.created).compareTo(a.modified ?? a.created)
             : a.created.compareTo(b.created);
         return byTime == 0 ? a.id.compareTo(b.id) : byTime;
@@ -269,7 +271,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
           'fields': 'id,name,version,md5Checksum,modifiedTime,size,createdTime',
         }),
         headers: {
-          'content-type': path == 'mbg-gakujo-handoff.v1.json'
+          'content-type': isPlannerInquiryName(path)
               ? 'application/json'
               : 'application/octet-stream',
         },
@@ -286,9 +288,9 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     final metadata = jsonEncode({
       'name': path,
       'parents': ['appDataFolder'],
-      if (path == 'mbg-gakujo-handoff.v1.json') 'mimeType': 'application/json',
+      if (isPlannerInquiryName(path)) 'mimeType': 'application/json',
     });
-    final mediaType = path == 'mbg-gakujo-handoff.v1.json'
+    final mediaType = isPlannerInquiryName(path)
         ? 'application/json'
         : 'application/octet-stream';
     final body = <int>[
