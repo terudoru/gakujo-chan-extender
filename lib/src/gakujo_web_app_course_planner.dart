@@ -134,10 +134,16 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         captureAllowed,
         background: false,
       );
-      final displayedTimetable =
-          student != null && displayed.any((entry) => entry.$1 == CoursePlannerImportKind.registration)
-          ? await CoursePlannerSource(_controller, captureAllowed).captureTimetable()
-          : null;
+      if (!captureAllowed()) return;
+      final displayedAt = DateTime.now().toUtc();
+      Object? displayedTimetable;
+      if (student != null && displayed.any((entry) => entry.$1 == CoursePlannerImportKind.registration)) {
+        try {
+          displayedTimetable = await CoursePlannerSource(_controller, captureAllowed).captureTimetable();
+        } on Object {
+          // A timetable capture failure must not discard the registration report.
+        }
+      }
       var fetched = const <(CoursePlannerImportKind, String)>[];
       var fetchedTimetable = const <Object?>[];
       var complete = false;
@@ -148,6 +154,14 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         } on Object {
           // The displayed inquiry is still available while the portal retries.
         }
+      }
+      final pageChanged = !captureAllowed();
+      if (pageChanged) {
+        // A verified snapshot can outlive its document, but never its login.
+        if (!allowed() || student == null || (displayed.isEmpty && displayedTimetable == null)) return;
+        fetched = const [];
+        fetchedTimetable = const [];
+        complete = false;
       }
       final timetable = {
         for (final term in [...fetchedTimetable, displayedTimetable])
@@ -182,8 +196,8 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         for (final kind in coursePlannerHandoffOrder)
           if (byKind[kind] case final token?) (kind, token),
       ];
-      final capturedAt = DateTime.now().toUtc();
-      if (!captureAllowed() || (captured.isEmpty && !background && timetable.isEmpty)) return;
+      final capturedAt = pageChanged ? displayedAt : DateTime.now().toUtc();
+      if (!allowed() || (captured.isEmpty && !background && timetable.isEmpty)) return;
       if (student != null && (timetable.isNotEmpty || !background)) {
         timetableShare = await retryPlannerDriveConflict(() => shareDrivePlannerTimetable(
           transport: activeTransport,
@@ -207,6 +221,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
           ));
       final scoped = captured.isEmpty || student == null || await shareReport(scope: student);
       final legacy = captured.isEmpty ||
+          pageChanged ||
           timetableShare == PlannerTimetableShare.unverified ||
           await shareReport();
       final success = scoped && legacy;
