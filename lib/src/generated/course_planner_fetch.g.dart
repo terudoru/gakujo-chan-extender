@@ -415,6 +415,49 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
       }
       return years.size === 1 ? [...years][0] || void 0 : void 0;
     }
+    function withStudentInquiryEnrollment(doc, base) {
+      var _a, _b, _c;
+      const entryNames = /* @__PURE__ */ new Map([
+        ["1年次入学", "1年次入学"],
+        ["新入学", "1年次入学"],
+        ["編入", "編入"],
+        ["編入学", "編入"],
+        ["転部", "転部"],
+        ["転学部", "転部"],
+        ["再入学", "再入学"]
+      ]);
+      const fields = /* @__PURE__ */ new Map();
+      for (const cell of Array.from(doc.querySelectorAll("th,td,dt"))) {
+        const heading2 = label(cell);
+        const name = heading2 === "入学種別" ? "入学区分" : heading2;
+        if (!["入学区分", "入学年次", "適用便覧年度"].includes(name)) continue;
+        const value = cell.nextElementSibling;
+        if (!value || !visible(cell) || !visible(value)) continue;
+        const printed = leaf(value).replace(/\s+/g, "");
+        if (!printed) continue;
+        const parsed = name === "入学区分" ? entryNames.get(printed) : name === "入学年次" ? (_a = /^(?:第)?([1-4])(?:年次)?$/.exec(printed)) == null ? void 0 : _a[1] : (_b = /^((?:19|20)\d{2})(?:年度)?$/.exec(printed)) == null ? void 0 : _b[1];
+        const values = (_c = fields.get(name)) != null ? _c : /* @__PURE__ */ new Set();
+        values.add(parsed || "");
+        fields.set(name, values);
+      }
+      function read(name) {
+        const values = fields.get(name);
+        return (values == null ? void 0 : values.size) === 1 ? values.values().next().value : void 0;
+      }
+      const entry = read("入学区分"), grade = read("入学年次");
+      const contradicts = entry === "1年次入学" && grade && grade !== "1";
+      const facts = [
+        ["入学区分", contradicts ? void 0 : entry],
+        ["入学年次", contradicts ? void 0 : grade],
+        ["適用便覧年度", read("適用便覧年度")]
+      ].filter((fact) => Boolean(fact[1]));
+      const { heading, rows } = base.tables[0];
+      const year = admissionYear(doc);
+      return __spreadValues({ v: 1, kind: "profile", tables: [{ heading, rows: [
+        [...rows[0].slice(0, 2), ...facts.map((fact) => fact[0])],
+        [...rows[1].slice(0, 2), ...facts.map((fact) => fact[1])]
+      ] }] }, year && { year });
+    }
     function profile(doc) {
       const matches = [];
       for (const table of Array.from(doc.querySelectorAll("table")).filter(visible)) {
@@ -450,8 +493,9 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
       if (kind === "profile") {
         const projected = profile(doc);
         if (!projected) return null;
-        const year2 = admissionYear(hasHeading(doc, studentInquiryName) ? doc : projected.table);
-        return __spreadValues({ v: 1, kind, tables: [projected.data] }, year2 ? { year: year2 } : {});
+        const year2 = admissionYear(projected.table);
+        const base = __spreadValues({ v: 1, kind, tables: [projected.data] }, year2 ? { year: year2 } : {});
+        return hasHeading(doc, studentInquiryName) ? withStudentInquiryEnrollment(doc, base) : base;
       }
       const tables = current.map((t) => tableData(t, kind)).filter((t) => !!t);
       const grid = kind === "registration" ? timetable(doc) : null;
@@ -467,7 +511,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
         }) : tables
       }, year ? { year } : {});
     }
-    return { visible, pageKinds, academicTables, profile, admissionYear, packet, registrationTerm, timetableSnapshot };
+    return { visible, pageKinds, academicTables, profile, withStudentInquiryEnrollment, packet, registrationTerm, timetableSnapshot };
   }
   function withinBounds(tables) {
     return tables.length > 0 && tables.length <= 50 && tables.reduce((n, t) => n + t.rows.length, 0) <= 6e3;
@@ -767,11 +811,7 @@ const String _coursePlannerFetchJsPrefix = r'''(function(__mbgConfig) {
       const student = read2.packet(studentPage.doc, "profile");
       const previous = packets.profile;
       const profile = student || previous;
-      const year = read2.admissionYear(studentPage.doc);
-      if (profile) {
-        const _b = profile, { year: oldYear } = _b, base = __objRest(_b, ["year"]);
-        packets.profile = year ? __spreadProps(__spreadValues({}, base), { year }) : base;
-      }
+      if (profile) packets.profile = read2.withStudentInquiryEnrollment(studentPage.doc, profile);
     }
     const ordered = {};
     for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];

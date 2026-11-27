@@ -364,11 +364,7 @@ async function fetchInquiries(signal: AbortSignal) {
     const student = read.packet(studentPage.doc, "profile");
     const previous = packets.profile;
     const profile = student || previous;
-    const year = read.admissionYear(studentPage.doc);
-    if (profile) {
-      const {year: oldYear, ...base} = profile;
-      packets.profile = year ? {...base, year} : base;
-    }
+    if (profile) packets.profile = read.withStudentInquiryEnrollment(studentPage.doc, profile);
   }
   const ordered: Partial<Record<Kind, Packet>> = {};
   for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];

@@ -547,6 +547,24 @@ try {
   const fromInquiry = (await runFetch()).packets.profile;
   assert.deepEqual(fromInquiry, directStudent);
   assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, studentUrl, regFlowUrl, regSem2Url]);
+  const enrollmentFields = '<dl><dt>入学区分</dt><dd>編入学</dd><dt>入学年次</dt><dd>第３年次</dd>' +
+    '<dt>適用便覧年度</dt><dd>２０２２年度</dd><dt>電話番号</dt><dd>PRIVATE-PHONE</dd></dl>';
+  delayed.set(studentUrl, studentHtml + enrollmentFields);
+  const withEnrollment = (await runFetch()).packets.profile;
+  assert.deepEqual(withEnrollment.tables[0].rows, [
+    ["所属", "学年", "入学区分", "入学年次", "適用便覧年度"],
+    ["理学部 物理学科", "3", "編入", "3", "2022"],
+  ]);
+  assert.equal(withEnrollment.year, "2024");
+  assert.doesNotMatch(JSON.stringify(withEnrollment), /PRIVATE-|04\/02/);
+  delayed.set(studentUrl, studentHtml.replace("<h1>学籍情報照会</h1>", "") +
+    enrollmentFields.replace("入学区分", "入学種別"));
+  assert.deepEqual((await runFetch()).packets.profile, withEnrollment);
+  delayed.set(studentUrl, (studentHtml + enrollmentFields).replace("編入学", "新入学"));
+  const conflicting = (await runFetch()).packets.profile;
+  assert.deepEqual(conflicting.tables[0].rows, [
+    ["所属", "学年", "適用便覧年度"], ["理学部 物理学科", "3", "2022"],
+  ]);
   delayed.set(studentUrl, studentHtml + '<table><tr><th>入学年度</th><td>2023年度</td></tr></table>');
   assert.equal((await runFetch()).packets.profile.year, undefined);
   delayed.set(studentUrl, studentHtml.replace("2024/04/02", "2024/02/30"));

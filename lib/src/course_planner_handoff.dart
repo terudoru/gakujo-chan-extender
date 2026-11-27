@@ -29,6 +29,8 @@ enum CoursePlannerImportKind {
   final String label;
 }
 
+const _enrollmentColumns = ['入学区分', '入学年次', '適用便覧年度'];
+
 /// Lives only while the student is choosing and reviewing this import.
 class CoursePlannerSource {
   CoursePlannerSource(this.controller, this.stillCurrent);
@@ -296,7 +298,9 @@ Map<String, dynamic>? _validateCoursePlannerPacket(
       const {'履修科目確認表'},
       const {'科目区分', '既修得単位数', '既修得単位(昼間)', '既修得単位(夜間)'},
     ),
-    CoursePlannerImportKind.profile => (const {'学生所属'}, const {'所属', '学年'}),
+    CoursePlannerImportKind.profile => (
+      const {'学生所属'}, const {'所属', '学年', ..._enrollmentColumns},
+    ),
   };
   for (final table in tables) {
     if (table is! Map ||
@@ -328,7 +332,7 @@ Map<String, dynamic>? _validateCoursePlannerPacket(
     }
     if (kind == CoursePlannerImportKind.profile) {
       if (rows.length != 2 ||
-          headers.length != 2 ||
+          headers.length < 2 ||
           headers[0] != '所属' ||
           headers[1] != '学年') {
         return null;
@@ -340,6 +344,19 @@ Map<String, dynamic>? _validateCoursePlannerPacket(
           _privateProfileText.hasMatch(affiliation) ||
           !const {'', '1', '2', '3', '4', '5', '6'}.contains(grade)) {
         return null;
+      }
+      var previous = -1;
+      for (var index = 2; index < headers.length; index++) {
+        final column = _enrollmentColumns.indexOf(headers[index] as String);
+        if (column <= previous) return null;
+        final value = values[index] as String;
+        final valid = switch (column) {
+          0 => const {'1年次入学', '編入', '転部', '再入学'}.contains(value),
+          1 => RegExp(r'^[1-4]$').hasMatch(value),
+          _ => RegExp(r'^(19|20)\d{2}$').hasMatch(value),
+        };
+        if (!valid) return null;
+        previous = column;
       }
     }
   }
@@ -401,22 +418,47 @@ bool hasCoursePlannerSplitBalances(String token) {
         (table['rows'].first as List).contains('既修得単位(昼間)'));
 }
 
-/// Keep the printed admission year if the caller verified both sources belong
-/// to the same student and their affiliations match exactly.
-String reuseCoursePlannerAdmissionYear(String displayed, String? fetched) {
+/// Reuse enrollment facts from a verified inquiry for the same student and affiliation.
+String reuseCoursePlannerEnrollmentFacts(String displayed, String? fetched) {
   if (fetched == null || fetched == displayed) return displayed;
   const kind = CoursePlannerImportKind.profile;
   final old = _decodeCoursePlannerToken(fetched, kind);
-  final year = old?['year'];
-  if (year == null) return displayed;
   final current = _decodeCoursePlannerToken(displayed, kind);
-  if (current == null ||
-      current['year'] != null ||
-      current['tables'][0]['rows'][1][0] != old!['tables'][0]['rows'][1][0]) {
+  if (current == null || old == null) return displayed;
+  final newRows = current['tables'][0]['rows'] as List;
+  final oldRows = old['tables'][0]['rows'] as List;
+  if (newRows[1][0] != oldRows[1][0]) return displayed;
+  final currentYear = current['year'] as String?, oldYear = old['year'] as String?;
+  if (currentYear != null && oldYear != null && currentYear != oldYear) return displayed;
+  Map<String, String> facts(List rows) => {
+    for (var i = 2; i < (rows[0] as List).length; i++)
+      rows[0][i] as String: rows[1][i] as String,
+  };
+  final known = facts(newRows), prior = facts(oldRows);
+  for (final field in const ['入学区分', '入学年次']) {
+    if (known[field] != null && prior[field] != null && known[field] != prior[field]) return displayed;
+  }
+  final merged = {...prior, ...known};
+  if (merged['入学区分'] == '1年次入学' &&
+      merged['入学年次'] != null && merged['入学年次'] != '1') {
     return displayed;
   }
-  return encodeCoursePlannerHandoff({...current, 'year': year}, kind) ??
-      displayed;
+  final year = currentYear ?? oldYear;
+  if (year == currentYear && merged.length == known.length) return displayed;
+  final columns = [
+    for (final label in _enrollmentColumns)
+      if (merged.containsKey(label)) label,
+  ];
+  return encodeCoursePlannerHandoff({
+    'v': 1, 'kind': kind.name,
+    'tables': [
+      {'heading': '学生所属', 'rows': [
+        ['所属', '学年', ...columns],
+        [newRows[1][0], newRows[1][1], ...columns.map((label) => merged[label]!)],
+      ]},
+    ],
+    'year': ?year,
+  }, kind) ?? displayed;
 }
 
 typedef _RegistrationRow = ({

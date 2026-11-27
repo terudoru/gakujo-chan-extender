@@ -142,7 +142,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         final backgroundToken = byKind[kind];
         byKind[kind] = switch (kind) {
           CoursePlannerImportKind.profile =>
-            reuseCoursePlannerAdmissionYear(token, backgroundToken),
+            reuseCoursePlannerEnrollmentFacts(token, backgroundToken),
           CoursePlannerImportKind.registration when backgroundToken != null =>
             mergeCoursePlannerRegistration(backgroundToken, token) ??
                 backgroundToken,

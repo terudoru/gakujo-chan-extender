@@ -116,7 +116,7 @@ Future<bool> shareDrivePlannerHandoffs({
         }
         next = combined;
       } else if (kind == CoursePlannerImportKind.profile) {
-        next = reuseCoursePlannerAdmissionYear(newer, older);
+        next = reuseCoursePlannerEnrollmentFacts(newer, older);
       } else if (kind == CoursePlannerImportKind.balances &&
           hasCoursePlannerSplitBalances(prior) &&
           !hasCoursePlannerSplitBalances(token)) {

@@ -60,15 +60,40 @@ void main() {
     final displayed = profile('理学部', '3');
     final inquiry = profile('理学部', '2', '2024');
     expect(
-      reuseCoursePlannerAdmissionYear(displayed, inquiry),
+      reuseCoursePlannerEnrollmentFacts(displayed, inquiry),
       profile('理学部', '3', '2024'),
     );
     expect(
-      reuseCoursePlannerAdmissionYear(displayed, profile('工学部', '2', '2024')),
+      reuseCoursePlannerEnrollmentFacts(displayed, profile('工学部', '2', '2024')),
       displayed,
     );
     final explicit = profile('理学部', '3', '2023');
-    expect(reuseCoursePlannerAdmissionYear(explicit, inquiry), explicit);
+    expect(reuseCoursePlannerEnrollmentFacts(explicit, inquiry), explicit);
+  });
+
+  test('verified enrollment facts survive a partial profile refresh', () {
+    const kind = CoursePlannerImportKind.profile;
+    String? token(String grade, Map<String, String> facts, {String year = '2024'}) =>
+        encodeCoursePlannerHandoff({
+          'v': 1, 'kind': kind.name,
+          'tables': [
+            {'heading': '学生所属', 'rows': [
+              ['所属', '学年', ...facts.keys],
+              ['理学部', grade, ...facts.values],
+            ]},
+          ],
+          'year': year,
+        }, kind);
+    const entry = {'入学区分': '編入', '入学年次': '3', '適用便覧年度': '2022'};
+    final prior = token('3', entry)!;
+    expect(reuseCoursePlannerEnrollmentFacts(token('4', {})!, prior), token('4', entry));
+    final differentYear = token('2', {}, year: '2026')!;
+    expect(reuseCoursePlannerEnrollmentFacts(differentYear, prior), differentYear);
+    final differentType = token('2', {'入学区分': '1年次入学'})!;
+    expect(reuseCoursePlannerEnrollmentFacts(differentType, prior), differentType);
+    expect(token('2', {'入学区分': '不明'}), isNull);
+    expect(token('2', {'適用便覧年度': '令和4年度'}), isNull);
+    expect(token('2', {'入学年次': '5'}), isNull);
   });
 
   test('the registration encoder matches the shared MBGPLAN1 vector', () {

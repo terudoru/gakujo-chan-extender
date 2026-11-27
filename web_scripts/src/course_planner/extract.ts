@@ -513,6 +513,47 @@ export function extractor(view: View) {
     return years.size === 1 ? [...years][0] || undefined : undefined;
   }
 
+  function withStudentInquiryEnrollment(doc: Document, base: Packet): Packet {
+    const entryNames = new Map([
+      ["1年次入学", "1年次入学"], ["新入学", "1年次入学"],
+      ["編入", "編入"], ["編入学", "編入"],
+      ["転部", "転部"], ["転学部", "転部"], ["再入学", "再入学"],
+    ]);
+    const fields = new Map<string, Set<string>>();
+    for (const cell of Array.from(doc.querySelectorAll("th,td,dt"))) {
+      const heading = label(cell);
+      const name = heading === "入学種別" ? "入学区分" : heading;
+      if (!["入学区分", "入学年次", "適用便覧年度"].includes(name)) continue;
+      const value = cell.nextElementSibling;
+      if (!value || !visible(cell) || !visible(value)) continue;
+      const printed = leaf(value).replace(/\s+/g, "");
+      if (!printed) continue;
+      const parsed = name === "入学区分" ? entryNames.get(printed)
+        : name === "入学年次" ? /^(?:第)?([1-4])(?:年次)?$/.exec(printed)?.[1]
+        : /^((?:19|20)\d{2})(?:年度)?$/.exec(printed)?.[1];
+      const values = fields.get(name) ?? new Set<string>();
+      values.add(parsed || "");
+      fields.set(name, values);
+    }
+    function read(name: string) {
+      const values = fields.get(name);
+      return values?.size === 1 ? values.values().next().value : undefined;
+    }
+    const entry = read("入学区分"), grade = read("入学年次");
+    const contradicts = entry === "1年次入学" && grade && grade !== "1";
+    const facts = [
+      ["入学区分", contradicts ? undefined : entry],
+      ["入学年次", contradicts ? undefined : grade],
+      ["適用便覧年度", read("適用便覧年度")],
+    ].filter((fact): fact is [string, string] => Boolean(fact[1]));
+    const {heading, rows} = base.tables[0];
+    const year = admissionYear(doc);
+    return {v:1, kind:"profile", tables:[{heading, rows:[
+      [...rows[0].slice(0, 2), ...facts.map(fact => fact[0])],
+      [...rows[1].slice(0, 2), ...facts.map(fact => fact[1])],
+    ]}], ...(year && {year})};
+  }
+
   function profile(doc: Document) {
     const matches: { table: HTMLTableElement; data: Table }[] = [];
     for (const table of Array.from(doc.querySelectorAll("table")).filter(visible)) {
@@ -560,8 +601,9 @@ export function extractor(view: View) {
     if (kind === "profile") {
       const projected = profile(doc);
       if (!projected) return null;
-      const year = admissionYear(hasHeading(doc, studentInquiryName) ? doc : projected.table);
-      return { v: 1, kind, tables: [projected.data], ...(year ? { year } : {}) };
+      const year = admissionYear(projected.table);
+      const base = { v: 1 as const, kind, tables: [projected.data], ...(year ? { year } : {}) };
+      return hasHeading(doc, studentInquiryName) ? withStudentInquiryEnrollment(doc, base) : base;
     }
     const tables = current
       .map((t) => tableData(t, kind))
@@ -583,7 +625,7 @@ export function extractor(view: View) {
       ...(year ? { year } : {}),
     };
   }
-  return { visible, pageKinds, academicTables, profile, admissionYear, packet, registrationTerm, timetableSnapshot };
+  return { visible, pageKinds, academicTables, profile, withStudentInquiryEnrollment, packet, registrationTerm, timetableSnapshot };
 }
 
 export function withinBounds(tables: Table[]) {
