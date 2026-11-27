@@ -139,13 +139,15 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         for (final (kind, token) in fetched) kind: token,
       };
       for (final (kind, token) in displayed) {
-        if (kind == CoursePlannerImportKind.registration &&
-            byKind.containsKey(kind)) {
-          continue;
-        }
-        byKind[kind] = kind == CoursePlannerImportKind.profile
-            ? reuseCoursePlannerAdmissionYear(token, byKind[kind])
-            : token;
+        final backgroundToken = byKind[kind];
+        byKind[kind] = switch (kind) {
+          CoursePlannerImportKind.profile =>
+            reuseCoursePlannerAdmissionYear(token, backgroundToken),
+          CoursePlannerImportKind.registration when backgroundToken != null =>
+            mergeCoursePlannerRegistration(backgroundToken, token) ??
+                backgroundToken,
+          _ => token,
+        };
       }
       final captured = [
         for (final kind in coursePlannerHandoffOrder)
@@ -169,6 +171,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
             captured: captured,
             allowed: allowed,
             capturedAt: capturedAt,
+            preserveAcademicHistory: student != null,
           );
       if (success && allowed()) {
         if (captured.isNotEmpty && (!background || complete)) {

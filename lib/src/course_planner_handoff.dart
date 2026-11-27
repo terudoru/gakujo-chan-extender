@@ -362,7 +362,8 @@ Map<String, dynamic>? _decodeCoursePlannerToken(
 bool validCoursePlannerToken(String token, CoursePlannerImportKind kind) =>
     _decodeCoursePlannerToken(token, kind) != null;
 
-/// Keep the printed admission year when both views were read in one session.
+/// Keep the printed admission year if the caller verified both sources belong
+/// to the same student and their affiliations match exactly.
 String reuseCoursePlannerAdmissionYear(String displayed, String? fetched) {
   if (fetched == null || fetched == displayed) return displayed;
   const kind = CoursePlannerImportKind.profile;
@@ -377,4 +378,121 @@ String reuseCoursePlannerAdmissionYear(String displayed, String? fetched) {
   }
   return encodeCoursePlannerHandoff({...current, 'year': year}, kind) ??
       displayed;
+}
+
+typedef _RegistrationRow = ({
+  String heading,
+  List<String> headers,
+  List<String> values,
+  String? identity,
+  bool confirmed,
+});
+
+final _registrationYear = RegExp(r'^((?:19|20)\d{2})(?:年度)?$');
+final _registrationCode = RegExp(
+  r'^(\d{3}[A-Z][A-Z0-9]{4,5})(?:\s*\(T[1-4](?:,[1-4])*\))?$',
+  caseSensitive: false,
+);
+
+Iterable<_RegistrationRow> _registrationRows(Map<String, dynamic> packet) sync* {
+  final scope = packet['year'] as String?;
+  for (final table in packet['tables'] as List) {
+    final heading = table['heading'] as String;
+    final rows = table['rows'] as List;
+    final original = (rows.first as List).cast<String>();
+    final yearColumn = original.indexOf('年度');
+    final codeColumn = original.indexOf('開講番号');
+    final statusColumn = original.indexOf('登録状況');
+    final headers = scope != null && yearColumn < 0
+        ? ['年度', ...original]
+        : original;
+    final denied = heading == '不許可となった科目';
+    for (final raw in rows.skip(1)) {
+      final row = (raw as List).cast<String>();
+      final printedYear = yearColumn < 0 ? '' : row[yearColumn].trim();
+      final year = printedYear.isEmpty
+          ? scope
+          : _registrationYear.firstMatch(printedYear)?.group(1);
+      // Combining packets removes the enclosing year. Keep inconsistent rows
+      // from gaining a valid scope as a side effect.
+      if (printedYear.isNotEmpty &&
+          (year == null || (scope != null && year != scope))) {
+        continue;
+      }
+      final code = codeColumn < 0
+          ? null
+          : _registrationCode
+                .firstMatch(row[codeColumn].trim())
+                ?.group(1)
+                ?.toUpperCase();
+      final identity =
+          year != null && code != null && code.startsWith(year.substring(2))
+          ? '$year/$code'
+          : null;
+      final status = statusColumn < 0 ? '' : row[statusColumn].trim();
+      final confirmed = denied
+          ? const {'', '不許可', '履修不許可'}.contains(status)
+          : const {
+              '許可', '許可済', '許可済み', '履修許可', '不許可', '履修不許可',
+              '申請中', '申請済', '申請済み', '抽選待ち', '履修申請中', '許可待ち',
+            }.contains(status);
+      final values = [
+        if (scope != null && yearColumn < 0) scope,
+        for (final (index, value) in row.indexed)
+          if (index == yearColumn && year != null) year else value,
+      ];
+      yield (
+        heading: heading,
+        headers: headers,
+        values: values,
+        identity: identity,
+        confirmed: confirmed,
+      );
+    }
+  }
+}
+
+/// Combine registration inquiries for one verified student. A valid newer
+/// outcome replaces earlier evidence for that offering. Missing rows and
+/// unreadable outcomes leave existing facts available to a fresh device.
+String? mergeCoursePlannerRegistration(String newer, String older) {
+  if (newer == older) return newer;
+  const kind = CoursePlannerImportKind.registration;
+  final current = _decodeCoursePlannerToken(newer, kind);
+  final previous = _decodeCoursePlannerToken(older, kind);
+  if (current == null || previous == null) return null;
+  final incoming = _registrationRows(current).toList();
+  final updated = <String>{
+    for (final row in incoming)
+      if (row.confirmed && row.identity != null) row.identity!,
+  };
+  final preserved = _registrationRows(previous)
+      .where(
+        (row) => row.confirmed &&
+            row.identity != null &&
+            !updated.contains(row.identity),
+      )
+      .toList();
+  if (preserved.isEmpty) return newer;
+  final preservedKeys = preserved.map((row) => row.identity).toSet();
+  final groups = <String, ({String heading, List<List<String>> rows})>{};
+  final seen = <String>{};
+  for (final row in [...preserved, ...incoming]) {
+    if (!row.confirmed && preservedKeys.contains(row.identity)) continue;
+    final key = jsonEncode([row.heading, row.headers]);
+    if (!seen.add(jsonEncode([key, row.values]))) continue;
+    final group = groups.putIfAbsent(
+      key,
+      () => (heading: row.heading, rows: [row.headers]),
+    );
+    group.rows.add(row.values);
+  }
+  if (groups.values.fold(0, (count, group) => count + group.rows.length) > 12000) return null;
+  return encodeCoursePlannerHandoff({
+    'v': 1,
+    'kind': kind.name,
+    'tables': [
+      for (final group in groups.values) {'heading': group.heading, 'rows': group.rows},
+    ],
+  }, kind);
 }

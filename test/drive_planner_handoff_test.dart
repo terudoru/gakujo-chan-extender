@@ -29,6 +29,7 @@ class _Drive implements StarSyncTransport {
   }) async {
     writes++;
     if (path == drivePlannerHandoffName) {
+      if (createOnly) expect(bytes, isNull);
       bytes = value;
     } else {
       if (createOnly) expect(extra.containsKey(path), isFalse);
@@ -45,6 +46,11 @@ class _Drive implements StarSyncTransport {
   @override
   void close() {}
 }
+
+Map<String, dynamic> _packetFromToken(String token) =>
+    jsonDecode(utf8.decode(base64Url.decode(
+      base64Url.normalize(token.substring('MBGPLAN1.'.length)),
+    ))) as Map<String, dynamic>;
 
 void main() {
   final fixture = File('test/fixtures/drive_planner_handoff_v1.json')
@@ -99,11 +105,13 @@ void main() {
     List<(CoursePlannerImportKind, String)>? packets,
     bool Function()? allowed,
     DateTime? at,
+    bool preserveAcademicHistory = false,
   }) => shareDrivePlannerHandoffs(
     transport: drive,
     captured: packets ?? captured,
     allowed: allowed ?? () => true,
     capturedAt: at ?? time,
+    preserveAcademicHistory: preserveAcademicHistory,
   );
 
   test('Drive body matches shared fixture byte for byte', () async {
@@ -157,6 +165,96 @@ void main() {
     await share(drive, at: time.add(const Duration(days: 1)));
     expect(drive.writes, 0);
     expect(drive.bytes, fixture);
+  });
+
+  test('verified registration captures retain missing terms and refresh explicit outcomes', () async {
+    const kind = CoursePlannerImportKind.registration;
+    String token(List<Map<String, Object?>> tables, {String? year}) =>
+        encodeCoursePlannerHandoff({
+          'v': 1,
+          'kind': kind.name,
+          'tables': tables,
+          'year': ?year,
+        }, kind)!;
+    final drive = _Drive();
+    final prior = token([
+      {'heading': '履修登録・登録状況照会', 'rows': [
+        ['年度', '開講番号', '登録状況'],
+        ['2025', '250H1002', '許可'],
+        ['2026', '269G9001', '申請中'],
+        ['2026', '269G9002', '許可'],
+      ]},
+      {'heading': '不許可となった科目', 'rows': [
+        ['年度', '開講番号', '科目名'],
+        ['2025', '250H1005', '合成不許可'],
+      ]},
+    ]);
+    final recent = token([
+      {'heading': '履修登録・登録状況照会', 'rows': [
+        ['開講番号', '登録状況'],
+        ['269G9001 (T1)', '許可'],
+        ['269G9002', '要確認'],
+        ['269G9003', '申請中'],
+      ]},
+      {'heading': '履修登録・登録状況照会', 'rows': [
+        ['年度', '開講番号', '登録状況'],
+        ['2024', '240H1003', '許可'],
+      ]},
+    ], year: '2026');
+    List<String> rows() {
+      final packet = decodeDrivePlannerHandoff(drive.bytes!)['packets'].single;
+      final decoded = _packetFromToken(packet['token'] as String);
+      expect(decoded['year'], isNull);
+      return [
+        for (final table in decoded['tables'])
+          for (final row in table['rows'].skip(1))
+            row.join('/'),
+      ];
+    }
+
+    await share(drive, packets: [(kind, prior)], preserveAcademicHistory: true);
+    final refreshAt = time.add(const Duration(minutes: 30));
+    expect(await share(drive, packets: [(kind, recent)], at: refreshAt,
+      preserveAcademicHistory: true), isTrue);
+    expect(rows(), unorderedEquals([
+      '2025/250H1002/許可',
+      '2025/250H1005/合成不許可',
+      '2026/269G9001 (T1)/許可',
+      '2026/269G9002/許可',
+      '2026/269G9003/申請中',
+    ]));
+    // Repeated current-only captures and a delayed older response cannot
+    // erase previous semesters or roll the new permission back.
+    await share(drive, packets: [(kind, recent)], at: refreshAt.add(const Duration(minutes: 1)),
+      preserveAcademicHistory: true);
+    await share(drive, packets: [(kind, prior)], at: time,
+      preserveAcademicHistory: true);
+    expect(drive.writes, 2);
+  });
+
+  test('verified profile refresh retains only a matching printed admission year', () async {
+    const kind = CoursePlannerImportKind.profile;
+    String token(String affiliation, String yearOfStudy, {String? admission}) =>
+        encodeCoursePlannerHandoff({
+          'v': 1, 'kind': kind.name, 'year': ?admission,
+          'tables': [{'heading': '学生所属', 'rows': [
+            ['所属', '学年'], [affiliation, yearOfStudy],
+          ]}],
+        }, kind)!;
+    const affiliation = '理学部物理学科';
+    final drive = _Drive();
+    await share(drive, packets: [(kind, token(affiliation, '2', admission: '2024'))],
+      preserveAcademicHistory: true);
+    await share(drive, packets: [(kind, token(affiliation, '3'))],
+      at: time.add(const Duration(days: 1)), preserveAcademicHistory: true);
+    String published() =>
+        decodeDrivePlannerHandoff(drive.bytes!)['packets'].single['token'] as String;
+    expect(_packetFromToken(published()),
+      _packetFromToken(token(affiliation, '3', admission: '2024')));
+    final changedAffiliation = token('工学部工学科', '3');
+    await share(drive, packets: [(kind, changedAffiliation)],
+      at: time.add(const Duration(days: 2)), preserveAcademicHistory: true);
+    expect(published(), changedAffiliation);
   });
   for (final reason in ['signed out', 'switch OFF', 'account changed']) {
     test('$reason prevents write including during read', () async {

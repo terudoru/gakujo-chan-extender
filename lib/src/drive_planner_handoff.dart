@@ -67,6 +67,7 @@ Future<bool> shareDrivePlannerHandoffs({
   required List<(CoursePlannerImportKind, String)> captured,
   required bool Function() allowed,
   required DateTime capturedAt,
+  bool preserveAcademicHistory = false,
 }) async {
   if (!allowed() || captured.isEmpty) return false;
   final remote = await transport.get(
@@ -91,23 +92,53 @@ Future<bool> shareDrivePlannerHandoffs({
           'token': packet['token'],
         },
   };
+  final timestamp = plannerTimestamp(capturedAt);
   var changed = false;
+  var complete = true;
   for (final (kind, token) in captured) {
     if (!validCoursePlannerToken(token, kind)) throw const FormatException();
-    if (packets[kind.name]?['token'] == token) continue;
+    final saved = packets[kind.name];
+    if (saved?['token'] == token) continue;
+    var next = token;
+    var at = timestamp;
+    if (preserveAcademicHistory && saved != null) {
+      final savedAt = saved['capturedAt'] as String;
+      final prior = saved['token'] as String;
+      final supersedes = timestamp.compareTo(savedAt) > 0;
+      final newer = supersedes ? token : prior;
+      final older = supersedes ? prior : token;
+      at = supersedes ? timestamp : savedAt;
+      if (kind == CoursePlannerImportKind.registration) {
+        final combined = mergeCoursePlannerRegistration(newer, older);
+        if (combined == null) {
+          complete = false;
+          continue;
+        }
+        next = combined;
+      } else if (kind == CoursePlannerImportKind.profile) {
+        next = reuseCoursePlannerAdmissionYear(newer, older);
+      } else {
+        next = newer;
+      }
+    }
+    if (saved?['token'] == next) continue;
     packets[kind.name] = {
       'kind': kind.name,
-      'capturedAt': plannerTimestamp(capturedAt),
-      'token': token,
+      'capturedAt': at,
+      'token': next,
     };
     changed = true;
   }
-  if (!changed) return true;
+  if (!changed) return complete;
+  final previousUpdate = previous?['updatedAt'] as String?;
   final bytes = utf8.encode(
     jsonEncode({
       'v': 1,
       'kind': 'mbg-gakujo-handoff',
-      'updatedAt': plannerTimestamp(capturedAt),
+      'updatedAt': previousUpdate != null &&
+              previousUpdate.compareTo(timestamp) > 0
+          ? previousUpdate
+          : timestamp,
       'packets': [
         for (final kind in coursePlannerHandoffOrder) ?packets[kind.name],
       ],
@@ -115,8 +146,12 @@ Future<bool> shareDrivePlannerHandoffs({
   );
   if (bytes.length > drivePlannerMaxBytes) throw const FormatException();
   if (!allowed()) return false;
-  await transport.put(drivePlannerHandoffName, bytes);
-  return allowed();
+  await transport.put(
+    drivePlannerHandoffName,
+    bytes,
+    createOnly: remote == null,
+  );
+  return complete && allowed();
 }
 
 bool plannerCaptureDue(String? lastSuccess, DateTime now) {
