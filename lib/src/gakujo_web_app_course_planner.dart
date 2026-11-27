@@ -194,7 +194,7 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         ));
         if (timetableShare == PlannerTimetableShare.cancelled) return;
       }
-      final timetablePending = timetableShare == PlannerTimetableShare.pending;
+      final timetablePending = timetableShare != PlannerTimetableShare.complete;
       complete &= !timetablePending;
       Future<bool> shareReport({String? scope}) =>
           retryPlannerDriveConflict(() => shareDrivePlannerHandoffs(
@@ -206,7 +206,9 @@ extension _CoursePlannerActions on _GakujoWebAppState {
             student: scope,
           ));
       final scoped = captured.isEmpty || student == null || await shareReport(scope: student);
-      final legacy = captured.isEmpty || await shareReport();
+      final legacy = captured.isEmpty ||
+          timetableShare == PlannerTimetableShare.unverified ||
+          await shareReport();
       final success = scoped && legacy;
       if ((timetablePending || !success) && !retryCapture && allowed()) {
         await storage.delete(key: key);

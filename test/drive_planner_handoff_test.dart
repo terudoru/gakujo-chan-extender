@@ -9,6 +9,8 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart'
 class _Drive implements StarSyncTransport {
   List<int>? bytes;
   final extra = <String, List<int>>{};
+  final readFailures = <String, Exception>{};
+  final writeFailures = <String, Exception>{};
   int writes = 0;
   void Function()? onRead;
   @override
@@ -17,6 +19,7 @@ class _Drive implements StarSyncTransport {
     int maxBytes = starSyncDefaultMaxBytes,
   }) async {
     onRead?.call();
+    if (readFailures[path] case final error?) throw error;
     final value = path == drivePlannerHandoffName ? bytes : extra[path];
     return value == null ? null : StarSyncRemoteObject(bytes: value);
   }
@@ -27,6 +30,7 @@ class _Drive implements StarSyncTransport {
     List<int> value, {
     bool createOnly = false,
   }) async {
+    if (writeFailures[path] case final error?) throw error;
     writes++;
     if (path == drivePlannerHandoffName) {
       if (createOnly) expect(bytes, isNull);
@@ -135,6 +139,79 @@ void main() {
     preserveAcademicHistory: preserveAcademicHistory,
     student: student,
   );
+
+  test('a bound student can rebuild a damaged timetable from fresh terms', () async {
+    final student = 's' * 43;
+    final malformed = utf8.encode('{broken');
+    final drive = _Drive()
+      ..extra['mbg-planner-student-binding-v1'] = utf8.encode(jsonEncode({'v':1,'scope':student}))
+      ..extra[drivePlannerTimetableName] = malformed;
+    final term = {
+      'year': '2025', 'semester': 'second',
+      'meetings': [
+        {'code':'250H1002','title':'心理・人間学入門','status':'許可','day':2,'period':3},
+      ],
+    };
+    Future<PlannerTimetableShare> timetable(List<Object?> terms) => shareDrivePlannerTimetable(
+      transport: drive, student: student, captured: terms, allowed: () => true, capturedAt: time,
+    );
+
+    expect(await timetable([]), PlannerTimetableShare.unverified);
+    expect(drive.extra[drivePlannerTimetableName], same(malformed));
+    expect(drive.writes, 0);
+    expect(await share(drive, student: student), isTrue);
+    expect(await timetable([term]), PlannerTimetableShare.complete);
+    final restored = jsonDecode(utf8.decode(drive.extra[drivePlannerTimetableName]!));
+    expect(restored['student'], student);
+    expect(restored['terms'], [{...term,'capturedAt':plannerTimestamp(time)}]);
+  });
+
+  test('a verified timetable failure leaves scoped inquiries shareable', () async {
+    const readFailure = StarSyncTransportException(StarSyncTransportErrorKind.network, 'Synthetic read outage');
+    const writeFailure = StarSyncTransportException(StarSyncTransportErrorKind.server, 'Synthetic write outage');
+    const denied = StarSyncTransportException(StarSyncTransportErrorKind.auth, 'Synthetic denial');
+    final student = 's' * 43;
+    final drive = _Drive();
+    Future<PlannerTimetableShare> marker() => shareDrivePlannerTimetable(
+      transport: drive, student: student, captured: const [], allowed: () => true, capturedAt: time,
+    );
+    drive.readFailures[drivePlannerTimetableName] = readFailure;
+    await expectLater(marker(), throwsA(same(readFailure)));
+    drive.extra['mbg-planner-student-binding-v1'] = utf8.encode(jsonEncode({'v':1,'scope':student}));
+    expect(await marker(), PlannerTimetableShare.unverified);
+    expect(await share(drive, student: student), isTrue);
+    expect(drive.extra, contains(driveScopedPlannerHandoffName));
+    expect(drive.extra, isNot(contains(drivePlannerTimetableName)));
+    drive.extra.remove('mbg-planner-student-binding-v1');
+    expect(await marker(), PlannerTimetableShare.unverified);
+    drive.readFailures[drivePlannerTimetableName] = denied;
+    await expectLater(marker(), throwsA(same(denied)));
+    drive.readFailures.clear();
+    drive.writeFailures[drivePlannerTimetableName] = writeFailure;
+    expect(await marker(), PlannerTimetableShare.pending);
+    drive.writeFailures.clear();
+    expect(await marker(), PlannerTimetableShare.complete);
+  });
+
+  test('foreign and unsupported timetable envelopes keep their bytes', () async {
+    final student = 's' * 43;
+    final foreign = 'f' * 43;
+    final drive = _Drive()
+      ..extra['mbg-planner-student-binding-v1'] = utf8.encode(jsonEncode({'v':1,'scope':student}));
+    Future<PlannerTimetableShare> marker() => shareDrivePlannerTimetable(
+      transport: drive, student: student, captured: const [], allowed: () => true, capturedAt: time,
+    );
+    List<int> futureTimetable(String scope) => utf8.encode(jsonEncode({
+      'v':2,'kind':'mbg-gakujo-timetable','student':scope,'terms':[],
+    }));
+    drive.extra[drivePlannerTimetableName] = futureTimetable(foreign);
+    await expectLater(marker(), throwsA(isA<PlannerTimetableStudentMismatch>()));
+    final original = futureTimetable(student);
+    drive.extra[drivePlannerTimetableName] = original;
+    expect(await marker(), PlannerTimetableShare.pending);
+    expect(drive.extra[drivePlannerTimetableName], same(original));
+    expect(drive.writes, 0);
+  });
 
   test('Drive body matches shared fixture byte for byte', () async {
     final drive = _Drive();

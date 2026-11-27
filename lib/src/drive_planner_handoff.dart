@@ -266,18 +266,18 @@ bool _validMeetings(List<dynamic> meetings, String year) {
   return slots.isNotEmpty;
 }
 
-({Map<String, Map<String, dynamic>?> terms, bool pending}) _readTimetableTerms(
+({Map<String, Map<String, dynamic>?> terms, bool pending})? _readTimetableTerms(
   List<Object?> values, {
   String? capturedAt,
 }) {
-  if (values.length > 60) throw const FormatException();
+  if (values.length > 60) return null;
   final terms = <String, Map<String, dynamic>?>{};
   var pending = false;
   var meetingCount = 0;
   for (final value in values) {
     final meetings = value is Map<String, dynamic> ? value['meetings'] : null;
     if (meetings is List && (meetingCount += meetings.length) > 12000) {
-      throw const FormatException();
+      return null;
     }
     final key = _termKey(value);
     if (key == null) {
@@ -299,7 +299,22 @@ class PlannerTimetableStudentMismatch implements Exception {
   const PlannerTimetableStudentMismatch();
 }
 
-enum PlannerTimetableShare { cancelled, pending, complete }
+enum PlannerTimetableShare {
+  cancelled,
+  pending,
+  // A matching binding permits scoped reports. The timetable owner still needs verification.
+  unverified,
+  complete,
+}
+
+bool _retryableTimetableFailure(StarSyncTransportException error) => const {
+  StarSyncTransportErrorKind.network,
+  StarSyncTransportErrorKind.tls,
+  StarSyncTransportErrorKind.server,
+  StarSyncTransportErrorKind.invalidResponse,
+  StarSyncTransportErrorKind.notFound,
+  StarSyncTransportErrorKind.storageFull,
+}.contains(error.kind);
 
 /// A timetable can start empty so a browser can recognize an MBG account
 /// before the first inquiry capture. Update only terms observed in this session.
@@ -312,10 +327,6 @@ Future<PlannerTimetableShare> shareDrivePlannerTimetable({
 }) async {
   if (!allowed()) return PlannerTimetableShare.cancelled;
   if (!_studentScope.hasMatch(student)) throw const FormatException();
-  final observed = _readTimetableTerms(
-    captured,
-    capturedAt: plannerTimestamp(capturedAt),
-  );
   final binding = await transport.get(_plannerBindingName, maxBytes: 4096);
   if (!allowed()) return PlannerTimetableShare.cancelled;
   if (binding != null) {
@@ -324,23 +335,66 @@ Future<PlannerTimetableShare> shareDrivePlannerTimetable({
       throw const PlannerTimetableStudentMismatch();
     }
   }
-  final remote = await transport.get(
-    drivePlannerTimetableName,
-    maxBytes: _plannerTimetableMaxBytes,
-  );
+
+  Future<bool> confirmedByOtherFile() async {
+    if (binding != null) return true;
+    final report = await transport.get(driveScopedPlannerHandoffName, maxBytes: drivePlannerMaxBytes);
+    if (!allowed() || report == null) return false;
+    try {
+      decodeDrivePlannerHandoff(report.bytes, allowUnreadableTokens: true, student: student);
+      return true;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  final StarSyncRemoteObject? remote;
+  try {
+    remote = await transport.get(drivePlannerTimetableName, maxBytes: _plannerTimetableMaxBytes);
+  } on StarSyncTransportException catch (error) {
+    if (!_retryableTimetableFailure(error)) rethrow;
+    final verified = await confirmedByOtherFile();
+    if (!allowed()) return PlannerTimetableShare.cancelled;
+    if (!verified) rethrow;
+    return PlannerTimetableShare.unverified;
+  }
   if (!allowed()) return PlannerTimetableShare.cancelled;
   var stored = const <Object?>[];
+  var unreadableBody = false;
+  var repair = false;
   if (remote != null) {
-    final value = jsonDecode(utf8.decode(remote.bytes));
-    if (value is! Map || value.length != 4 || value['v'] != 1 ||
-        value['kind'] != 'mbg-gakujo-timetable') {
-      throw const FormatException();
+    Object? value;
+    try {
+      value = jsonDecode(utf8.decode(remote.bytes));
+    } on FormatException {
+      final verified = await confirmedByOtherFile();
+      if (!allowed()) return PlannerTimetableShare.cancelled;
+      if (!verified) rethrow;
+      unreadableBody = true;
+      repair = true;
     }
-    if (value['student'] != student) throw const PlannerTimetableStudentMismatch();
-    if (value['terms'] is! List) throw const FormatException();
-    stored = value['terms'] as List;
+    if (!unreadableBody) {
+      final owner = value is Map ? value['student'] : null;
+      if (value is! Map || value['kind'] != 'mbg-gakujo-timetable' ||
+          owner is! String || !_studentScope.hasMatch(owner)) {
+        final verified = await confirmedByOtherFile();
+        if (!allowed()) return PlannerTimetableShare.cancelled;
+        if (!verified) throw const FormatException();
+        return PlannerTimetableShare.unverified;
+      }
+      if (owner != student) throw const PlannerTimetableStudentMismatch();
+      if (value.length != 4 || value['v'] != 1) return PlannerTimetableShare.pending;
+      if (value['terms'] case final List<Object?> terms) {
+        stored = terms;
+      } else {
+        repair = true;
+      }
+    }
   }
+  final incomplete = unreadableBody ? PlannerTimetableShare.unverified : PlannerTimetableShare.pending;
+  final observed = _readTimetableTerms(captured, capturedAt: plannerTimestamp(capturedAt));
   final existing = _readTimetableTerms(stored);
+  if (observed == null || existing == null) return incomplete;
   final updates = <String, Map<String, dynamic>>{};
   for (final MapEntry(:key, value: term) in observed.terms.entries) {
     if (term == null) continue;
@@ -353,8 +407,8 @@ Future<PlannerTimetableShare> shareDrivePlannerTimetable({
     updates[key] = term;
   }
   if (updates.isEmpty && remote != null) {
-    return observed.pending || existing.pending
-        ? PlannerTimetableShare.pending
+    return repair || observed.pending || existing.pending
+        ? incomplete
         : PlannerTimetableShare.complete;
   }
   final merged = <Object?>[
@@ -363,15 +417,21 @@ Future<PlannerTimetableShare> shareDrivePlannerTimetable({
     ...updates.values,
   ];
   final result = _readTimetableTerms(merged);
+  if (result == null) return incomplete;
   final bytes = utf8.encode(jsonEncode({
     'v': 1,
     'kind': 'mbg-gakujo-timetable',
     'student': student,
     'terms': merged,
   }));
-  if (bytes.length > _plannerTimetableMaxBytes) throw const FormatException();
+  if (bytes.length > _plannerTimetableMaxBytes) return incomplete;
   if (!allowed()) return PlannerTimetableShare.cancelled;
-  await transport.put(drivePlannerTimetableName, bytes, createOnly: remote == null);
+  try {
+    await transport.put(drivePlannerTimetableName, bytes, createOnly: remote == null);
+  } on StarSyncTransportException catch (error) {
+    if (!_retryableTimetableFailure(error)) rethrow;
+    return allowed() ? incomplete : PlannerTimetableShare.cancelled;
+  }
   if (!allowed()) return PlannerTimetableShare.cancelled;
   return observed.pending || result.pending
       ? PlannerTimetableShare.pending
