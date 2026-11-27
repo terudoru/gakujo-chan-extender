@@ -128,7 +128,7 @@ StarSyncGoogleAuth createStarSyncGoogleAuth({
 }) {
   final effectiveConfig = config ?? const StarSyncGoogleAuthConfig();
   if (Platform.isAndroid || Platform.isIOS) {
-    return StarSyncGoogleMobileAuth(config: effectiveConfig);
+    return StarSyncGoogleMobileAuth(config: effectiveConfig, storage: storage);
   }
   if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
     return StarSyncGoogleDesktopAuth(

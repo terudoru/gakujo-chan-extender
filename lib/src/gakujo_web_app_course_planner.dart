@@ -20,7 +20,11 @@ extension _CoursePlannerActions on _GakujoWebAppState {
   void _retryPlannerSharing() {
     _plannerShareRetry ??= Timer(const Duration(minutes: 5), () {
       _plannerShareRetry = null;
-      unawaited(_autoSharePlannerResults());
+      if (_starSyncGoogleAuth.currentEmail == null) {
+        unawaited(_restorePlannerGoogleSession());
+      } else {
+        unawaited(_autoSharePlannerResults());
+      }
     });
   }
 

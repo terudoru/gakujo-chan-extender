@@ -10,6 +10,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/generated/history_marker.g.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart' as win;
 
@@ -54,6 +55,34 @@ class _Pops extends NavigatorObserver {
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     routes.add(route);
+  }
+}
+
+class _RestoringGoogleAuth extends Fake implements StarSyncGoogleAuth {
+  final tried = Completer<void>();
+  final restored = Completer<void>();
+  final sharing = Completer<void>();
+  @override
+  String? currentEmail;
+  @override
+  int generation = 0;
+  @override
+  Future<String?> restore({String? expectedEmail}) async {
+    expect(expectedEmail, isNull);
+    if (!tried.isCompleted) {
+      tried.complete();
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.network);
+    }
+    currentEmail = 'resumed@example.invalid';
+    generation++;
+    restored.complete();
+    return currentEmail;
+  }
+
+  @override
+  Future<String> accessToken({bool forceRefresh = false}) async {
+    if (!sharing.isCompleted) sharing.complete();
+    throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.network);
   }
 }
 
@@ -462,6 +491,20 @@ void main() {
           expect(find.byType(SnackBar), findsNothing);
         });
       }
+
+      // A planner-only Google login recovers on its own after a failed startup.
+      final auth = _RestoringGoogleAuth();
+      final page = _Toolbar(tester, ++viewId, academicFixture: true, googleAuth: auth);
+      try {
+        await page.mount();
+        await page._waitFor(auth.tried, 'restore Google login on startup');
+        expect(auth.sharing.isCompleted, isFalse);
+        await tester.pump(const Duration(minutes: 5));
+        await page._waitFor(auth.restored, 'retry Google login without another sync setting');
+        await page._waitFor(auth.sharing, 'start the connected academic data transfer');
+      } finally {
+        await page.close();
+      }
     },
     variant: TargetPlatformVariant.only(TargetPlatform.windows),
     skip: !Platform.isWindows,
@@ -475,10 +518,12 @@ class _Toolbar {
     this.academicFixture = false,
     this.fetchHandler,
     this.captureThrows = false,
+    this.googleAuth,
   });
   final bool academicFixture;
   final Future<Object?> Function()? fetchHandler;
   final bool captureThrows;
+  final StarSyncGoogleAuth? googleAuth;
   final WidgetTester tester;
   final int id;
   final _pops = _Pops();
@@ -515,6 +560,11 @@ class _Toolbar {
       'more_better_gakujo_disabled_feature_flags': 'update_notice',
       if (academicFixture)
         'more_better_gakujo_active_login_account': 'synthetic-account',
+      if (googleAuth != null)
+        'more_better_gakujo_planner_login_scope': jsonEncode({
+          'account': 'synthetic-account',
+          'student': 's' * 43,
+        }),
     };
     messenger.setMockMethodCallHandler(
       _storage,
@@ -620,6 +670,7 @@ class _Toolbar {
         navigatorObservers: [_pops],
         home: GakujoWebApp(
           localPrefsStore: _Prefs(),
+          googleAuth: googleAuth,
           gakujoReachable: () async => false,
         ),
       ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
@@ -21,6 +22,7 @@ void main() {
   });
 
   setUp(() {
+    FlutterSecureStorage.setMockInitialValues({});
     platform.reset();
     reachable = true;
     reachabilityCalls = 0;
@@ -33,6 +35,35 @@ void main() {
       },
     );
   });
+
+  test(
+    'Android restores a prior Google login without another sync account setting',
+    () async {
+      final email = await auth.signIn();
+      platform.calls.clear();
+      platform.requests.clear();
+      final restarted = StarSyncGoogleMobileAuth(
+        config: const StarSyncGoogleAuthConfig(),
+        isAndroidOverride: true,
+        isGoogleReachableOverride: () async => reachable,
+      );
+      reachable = false;
+      platform.denySilent = true;
+      expect(await restarted.restore(), email);
+      expect(platform.calls, ['silent']);
+      expect(platform.requests.single.email, email);
+      expect(platform.requests.single.promptIfUnauthorized, isFalse);
+
+      reachable = true;
+      platform.denySilent = false;
+      expect(await restarted.accessToken(), 'token');
+      expect(platform.calls, ['silent', 'silent']);
+      await restarted.signOut();
+      platform.calls.clear();
+      expect(await restarted.restore(), isNull);
+      expect(platform.calls, isEmpty);
+    },
+  );
 
   group('Drive folder picker', () {
     const channel = MethodChannel(

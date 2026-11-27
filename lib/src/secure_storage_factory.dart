@@ -62,6 +62,7 @@ class SecureStorageFactory {
     'more_better_gakujo_failed_downloads',
     'more_better_gakujo_favorites',
     'more_better_gakujo_google_quota',
+    'more_better_gakujo_google_signed_in_email',
     'more_better_gakujo_last_url',
     'more_better_gakujo_login_credentials_v2',
     'more_better_gakujo_login_id',

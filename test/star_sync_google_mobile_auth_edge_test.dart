@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
@@ -18,6 +19,7 @@ void main() {
   late bool reachable;
   setUpAll(() => GoogleSignInPlatform.instance = platform);
   setUp(() {
+    FlutterSecureStorage.setMockInitialValues({});
     platform.reset();
     reachable = true;
     auth = StarSyncGoogleMobileAuth(

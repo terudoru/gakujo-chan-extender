@@ -1,26 +1,33 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 
+import '../secure_storage_factory.dart';
 import 'star_sync_google_auth.dart';
 
 class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   StarSyncGoogleMobileAuth({
     required this.config,
+    FlutterSecureStorage? storage,
     @visibleForTesting bool? isAndroidOverride,
     @visibleForTesting Future<bool> Function()? isGoogleReachableOverride,
-  }) : _isAndroid = isAndroidOverride ?? Platform.isAndroid,
+  }) : _storage = storage ?? SecureStorageFactory.create(),
+       _isAndroid = isAndroidOverride ?? Platform.isAndroid,
        _isGoogleReachable = isGoogleReachableOverride ?? _lookupGoogle;
   final StarSyncGoogleAuthConfig config;
+  final FlutterSecureStorage _storage;
   final bool _isAndroid;
   final Future<bool> Function() _isGoogleReachable;
   static const _folderPicker = MethodChannel(
     'net.yoshida.morebettergakujo/drive_folder_picker',
   );
+  static const _androidGoogleEmailKey = 'more_better_gakujo_google_signed_in_email';
   // All mobile auth instances share the same native picker and FIFO channel.
   static ({StarSyncGoogleMobileAuth owner, Completer<String?> cancel})?
       _activePick;
@@ -146,8 +153,9 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       _scopes
         ..clear()
         ..addAll(starSyncGoogleScopes);
-      if (expectedEmail == null || expectedEmail.trim().isEmpty) return null;
-      _restoredEmail = expectedEmail;
+      final email = expectedEmail ?? await _storage.read(key: _androidGoogleEmailKey);
+      if (email == null || email.trim().isEmpty) return null;
+      _restoredEmail = email;
       try {
         final authorization = await _silentTokens(starSyncGoogleScopes);
         if (authorization == null) {
@@ -210,6 +218,13 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
         _scopes.addAll(optionalScopes);
       } on Object {
         // Refusing an optional scope must not undo the sign-in.
+      }
+    }
+    if (_isAndroid) {
+      try {
+        await _storage.write(key: _androidGoogleEmailKey, value: account.email);
+      } on Object {
+        developer.log('Could not remember Google login on Android');
       }
     }
     return account.email;
@@ -374,6 +389,13 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       _account = null;
       _restoredEmail = null;
       _token = null;
+      if (_isAndroid) {
+        try {
+          await _storage.delete(key: _androidGoogleEmailKey);
+        } on Object {
+          throw const StarSyncGoogleRevocationException();
+        }
+      }
     }
   }
 }

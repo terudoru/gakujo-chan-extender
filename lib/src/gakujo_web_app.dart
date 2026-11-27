@@ -2583,6 +2583,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             developer.log('Failed to restore Google sign-in: ${error.runtimeType}',
                 name: 'MoreBetterGakujo');
           }
+        } else {
+          unawaited(_restorePlannerGoogleSession());
         }
       }());
       unawaited(_autoSharePlannerResults());
@@ -2603,6 +2605,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     } on Object catch (error) {
       developer.log('Failed to sync message stars: ${error.runtimeType}',
           name: 'MoreBetterGakujo');
+    }
+  }
+
+  Future<void> _restorePlannerGoogleSession() async {
+    try {
+      // Drive downloads and app-wide sync can restore their configured account.
+      await _driveDownloadsLoad;
+      await _driveDownloadQueue.run(() async {
+        if (!mounted || _driveDownloadPreference.enabled ||
+            _starSyncEngine.config != null || _starSyncGoogleAuth.currentEmail != null) {
+          return;
+        }
+        final email = await _starSyncGoogleAuth.restore();
+        if (!mounted || !sameGoogleAccount(email, _starSyncGoogleAuth.currentEmail)) return;
+        setState(() => _starSyncGoogleEmail = email);
+        unawaited(_autoSharePlannerResults());
+      });
+    } on Object {
+      developer.log('Could not restore Google login for the planner');
+      if (mounted) _retryPlannerSharing();
     }
   }
 
