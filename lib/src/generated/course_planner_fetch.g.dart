@@ -25,6 +25,18 @@ const String coursePlannerFetchJs = r'''
     return a;
   };
   var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+  var __objRest = (source, exclude) => {
+    var target = {};
+    for (var prop in source)
+      if (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)
+        target[prop] = source[prop];
+    if (source != null && __getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(source)) {
+        if (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))
+          target[prop] = source[prop];
+      }
+    return target;
+  };
 
   // web_scripts/src/course_planner/extract.ts
   var origin = "https://gakujo.iess.niigata-u.ac.jp";
@@ -34,6 +46,7 @@ const String coursePlannerFetchJs = r'''
     balances: "履修科目確認表",
     profile: "学生所属"
   };
+  var studentInquiryName = "学籍情報照会";
   var rejected = "不許可となった科目";
   var codePattern = /^(\d{3}[A-Z][A-Z0-9]{4,5})(?:\s*\(T[\d,\s～~-]+\))?$/;
   var offeringColumns = ["開講所属", "クラス", "学期"];
@@ -247,7 +260,7 @@ const String coursePlannerFetchJs = r'''
         (t) => !!header(t, "balances")
       ))
         kinds.push("balances");
-      if ((grade || registration) && profile(doc)) kinds.push("profile");
+      if ((grade || registration || hasHeading(doc, studentInquiryName)) && profile(doc)) kinds.push("profile");
       return kinds;
     }
     function header(table, kind) {
@@ -336,6 +349,31 @@ const String coursePlannerFetchJs = r'''
       }
       return rows.length > 1 ? { heading: names.registration, rows } : null;
     }
+    function admissionYear(root) {
+      var _a, _b, _c, _d, _e;
+      const years = /* @__PURE__ */ new Set();
+      for (const cell of Array.from(root.querySelectorAll("th,td,dt"))) {
+        const name = label(cell);
+        if (name !== "入学年度" && name !== "入学年月" && name !== "入学年月日") continue;
+        const value = cell.nextElementSibling;
+        if (!value || !visible(cell) || !visible(value)) continue;
+        const printed = leaf(value).replace(/\s+/g, "");
+        if (!printed) continue;
+        if (name === "入学年度") {
+          years.add(((_a = /^((?:19|20)\d{2})(?:年度)?$/.exec(printed)) == null ? void 0 : _a[1]) || "");
+          continue;
+        }
+        const japanese = /^((?:19|20)\d{2})年(\d{1,2})月(?:(\d{1,2})日)?$/.exec(printed);
+        const numeric = /^((?:19|20)\d{2})([-/.])(\d{1,2})(?:\2(\d{1,2}))?$/.exec(printed);
+        const year = Number((_b = japanese == null ? void 0 : japanese[1]) != null ? _b : numeric == null ? void 0 : numeric[1]);
+        const month = Number((_c = japanese == null ? void 0 : japanese[2]) != null ? _c : numeric == null ? void 0 : numeric[3]);
+        const day = Number((_e = (_d = japanese == null ? void 0 : japanese[3]) != null ? _d : numeric == null ? void 0 : numeric[4]) != null ? _e : "1");
+        const utc = new Date(Date.UTC(year, month - 1, day));
+        const academicYear = month < 4 ? year - 1 : year;
+        years.add(academicYear >= 1900 && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day ? String(academicYear) : "");
+      }
+      return years.size === 1 ? [...years][0] || void 0 : void 0;
+    }
     function profile(doc) {
       const matches = [];
       for (const table of Array.from(doc.querySelectorAll("table")).filter(visible)) {
@@ -370,7 +408,9 @@ const String coursePlannerFetchJs = r'''
       var _a;
       if (kind === "profile") {
         const projected = profile(doc);
-        return projected ? { v: 1, kind, tables: [projected.data] } : null;
+        if (!projected) return null;
+        const year2 = admissionYear(hasHeading(doc, studentInquiryName) ? doc : projected.table);
+        return __spreadValues({ v: 1, kind, tables: [projected.data] }, year2 ? { year: year2 } : {});
       }
       const tables = current.map((t) => tableData(t, kind)).filter((t) => !!t);
       const grid = kind === "registration" ? timetable(doc) : null;
@@ -395,7 +435,7 @@ const String coursePlannerFetchJs = r'''
         }) : tables
       }, year ? { year } : {});
     }
-    return { visible, pageKinds, academicTables, profile, packet };
+    return { visible, pageKinds, academicTables, profile, admissionYear, packet };
   }
   function withinBounds(tables) {
     return tables.length > 0 && tables.length <= 50 && tables.reduce((n, t) => n + t.rows.length, 0) <= 6e3;
@@ -495,7 +535,11 @@ const String coursePlannerFetchJs = r'''
   function get(path) {
     const xhr = new XMLHttpRequest();
     xhr.open("GET", path, false);
-    xhr.send(null);
+    try {
+      xhr.send(null);
+    } catch (e) {
+      return null;
+    }
     if (xhr.status < 200 || xhr.status >= 300) return null;
     if (xhr.responseText.length > maxPageLength) return null;
     const doc = new DOMParser().parseFromString(xhr.responseText, "text/html");
@@ -567,6 +611,19 @@ const String coursePlannerFetchJs = r'''
         kind: "registration",
         tables: registration
       }, years.size === 1 && !yearless ? { year: Array.from(years)[0] } : {});
+    const studentPath = discover(docs, studentInquiryName);
+    const studentPage = studentPath ? get(studentPath) : null;
+    if (studentPage) {
+      const read = extractor(staticView(studentPage.href));
+      const student = read.packet(studentPage.doc, "profile");
+      const previous = packets.profile;
+      const profile = student || previous;
+      const year = read.admissionYear(studentPage.doc);
+      if (profile) {
+        const _a = profile, { year: oldYear } = _a, base = __objRest(_a, ["year"]);
+        packets.profile = year ? __spreadProps(__spreadValues({}, base), { year }) : base;
+      }
+    }
     const ordered = {};
     for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
     return { v: 1, packets: ordered };

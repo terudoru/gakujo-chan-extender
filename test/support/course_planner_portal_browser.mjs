@@ -428,6 +428,35 @@ try {
   assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, regSem2Url, oldRegUrl]);
   delayed.set(regFlowUrl, sem1Html);
 
+  const studentUrl = portal + "campussquare.do?_flowId=TestStudentInquiry-flow";
+  const studentHtml = '<h1>学籍情報照会</h1>' +
+    '<table><tr><th>所属</th><td>理学部 物理学科</td><th>学年</th><td>3</td></tr></table>' +
+    '<table><tr><th>入学年月日</th><td>2024/04/02</td><th>出身高校</th><td>PRIVATE-SCHOOL</td></tr>' +
+    '<tr><th>学生氏名</th><td>PRIVATE-NAME</td><th>在籍番号</th><td>PRIVATE-ID</td></tr></table>';
+  delayed.set(studentUrl, studentHtml);
+  await page.goto(studentUrl);
+  assert.deepEqual(await ask({}), ["profile"]);
+  const directStudent = await ask({ kind: "profile" });
+  assert.equal(directStudent.year, "2024");
+  assert.deepEqual(directStudent.tables[0].rows[1], ["理学部 物理学科", "3"]);
+  assert.doesNotMatch(JSON.stringify(directStudent), /PRIVATE-|04\/02|入学年月日/);
+
+  delayed.set(url, '<nav><a href="' + studentUrl + '">学籍情報照会</a></nav>');
+  await page.goto(url);
+  requests.length = 0;
+  const fromInquiry = (await runFetch()).packets.profile;
+  assert.deepEqual(fromInquiry, directStudent);
+  assert.deepEqual(requests.map(request => request.url), [gradesFlowUrl, regFlowUrl, regSem2Url, studentUrl]);
+  delayed.set(studentUrl, studentHtml + '<table><tr><th>入学年度</th><td>2023年度</td></tr></table>');
+  assert.equal((await runFetch()).packets.profile.year, undefined);
+  delayed.set(studentUrl, studentHtml.replace("2024/04/02", "2024/02/30"));
+  assert.equal((await runFetch()).packets.profile.year, undefined);
+  await context.route(studentUrl, route => route.abort());
+  const withoutStudent = (await runFetch()).packets;
+  assert.deepEqual(withoutStudent.grades, liveParityGrades);
+  assert.equal(withoutStudent.profile.year, undefined);
+  await context.unroute(studentUrl);
+
   // Link discovery: onclick & javascript: href work; cross-origin, _eventId, _flowExecutionKey,
   // non-campussquare, and conflicting duplicate flows are rejected; missing safe links use
   // the grades and registration portlet fallbacks.

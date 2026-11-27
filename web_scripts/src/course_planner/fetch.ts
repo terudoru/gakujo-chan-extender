@@ -5,6 +5,7 @@ import {
   normalized,
   origin,
   staticView,
+  studentInquiryName,
   withinBounds,
   type Kind,
   type Packet,
@@ -142,7 +143,7 @@ const sessionExpired = new Error("session-expired");
 function get(path: string): { doc: Document; href: string } | null {
   const xhr = new XMLHttpRequest();
   xhr.open("GET", path, false);
-  xhr.send(null);
+  try { xhr.send(null); } catch { return null; }
   if (xhr.status < 200 || xhr.status >= 300) return null;
   if (xhr.responseText.length > maxPageLength) return null;
   const doc = new DOMParser().parseFromString(xhr.responseText, "text/html");
@@ -225,6 +226,21 @@ function fetchInquiries() {
       tables: registration,
       ...(years.size === 1 && !yearless ? { year: Array.from(years)[0] } : {}),
     };
+  // Read the student inquiry only when the portal advertises the read-only flow.
+  // The official admission-year fact can be separate from the affiliation table.
+  const studentPath = discover(docs, studentInquiryName);
+  const studentPage = studentPath ? get(studentPath) : null;
+  if (studentPage) {
+    const read = extractor(staticView(studentPage.href));
+    const student = read.packet(studentPage.doc, "profile");
+    const previous = packets.profile;
+    const profile = student || previous;
+    const year = read.admissionYear(studentPage.doc);
+    if (profile) {
+      const {year: oldYear, ...base} = profile;
+      packets.profile = year ? {...base, year} : base;
+    }
+  }
   const ordered: Partial<Record<Kind, Packet>> = {};
   for (const kind of order) if (packets[kind]) ordered[kind] = packets[kind];
   return { v: 1, packets: ordered };

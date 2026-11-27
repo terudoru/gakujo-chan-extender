@@ -40,6 +40,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
     balances: "履修科目確認表",
     profile: "学生所属"
   };
+  var studentInquiryName = "学籍情報照会";
   var rejected = "不許可となった科目";
   var codePattern = /^(\d{3}[A-Z][A-Z0-9]{4,5})(?:\s*\(T[\d,\s～~-]+\))?$/;
   var offeringColumns = ["開講所属", "クラス", "学期"];
@@ -203,7 +204,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
         (t) => !!header(t, "balances")
       ))
         kinds.push("balances");
-      if ((grade || registration) && profile(doc)) kinds.push("profile");
+      if ((grade || registration || hasHeading(doc, studentInquiryName)) && profile(doc)) kinds.push("profile");
       return kinds;
     }
     function header(table, kind) {
@@ -292,6 +293,31 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
       }
       return rows.length > 1 ? { heading: names.registration, rows } : null;
     }
+    function admissionYear(root) {
+      var _a, _b, _c, _d, _e;
+      const years = /* @__PURE__ */ new Set();
+      for (const cell of Array.from(root.querySelectorAll("th,td,dt"))) {
+        const name = label(cell);
+        if (name !== "入学年度" && name !== "入学年月" && name !== "入学年月日") continue;
+        const value = cell.nextElementSibling;
+        if (!value || !visible2(cell) || !visible2(value)) continue;
+        const printed = leaf(value).replace(/\s+/g, "");
+        if (!printed) continue;
+        if (name === "入学年度") {
+          years.add(((_a = /^((?:19|20)\d{2})(?:年度)?$/.exec(printed)) == null ? void 0 : _a[1]) || "");
+          continue;
+        }
+        const japanese = /^((?:19|20)\d{2})年(\d{1,2})月(?:(\d{1,2})日)?$/.exec(printed);
+        const numeric = /^((?:19|20)\d{2})([-/.])(\d{1,2})(?:\2(\d{1,2}))?$/.exec(printed);
+        const year = Number((_b = japanese == null ? void 0 : japanese[1]) != null ? _b : numeric == null ? void 0 : numeric[1]);
+        const month = Number((_c = japanese == null ? void 0 : japanese[2]) != null ? _c : numeric == null ? void 0 : numeric[3]);
+        const day = Number((_e = (_d = japanese == null ? void 0 : japanese[3]) != null ? _d : numeric == null ? void 0 : numeric[4]) != null ? _e : "1");
+        const utc = new Date(Date.UTC(year, month - 1, day));
+        const academicYear = month < 4 ? year - 1 : year;
+        years.add(academicYear >= 1900 && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day ? String(academicYear) : "");
+      }
+      return years.size === 1 ? [...years][0] || void 0 : void 0;
+    }
     function profile(doc) {
       const matches = [];
       for (const table of Array.from(doc.querySelectorAll("table")).filter(visible2)) {
@@ -326,7 +352,9 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
       var _a;
       if (kind === "profile") {
         const projected = profile(doc);
-        return projected ? { v: 1, kind, tables: [projected.data] } : null;
+        if (!projected) return null;
+        const year2 = admissionYear(hasHeading(doc, studentInquiryName) ? doc : projected.table);
+        return __spreadValues({ v: 1, kind, tables: [projected.data] }, year2 ? { year: year2 } : {});
       }
       const tables = current.map((t) => tableData(t, kind)).filter((t) => !!t);
       const grid = kind === "registration" ? timetable(doc) : null;
@@ -351,7 +379,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
         }) : tables
       }, year ? { year } : {});
     }
-    return { visible: visible2, pageKinds: pageKinds2, academicTables: academicTables2, profile, packet: packet2 };
+    return { visible: visible2, pageKinds: pageKinds2, academicTables: academicTables2, profile, admissionYear, packet: packet2 };
   }
   function withinBounds(tables) {
     return tables.length > 0 && tables.length <= 50 && tables.reduce((n, t) => n + t.rows.length, 0) <= 6e3;

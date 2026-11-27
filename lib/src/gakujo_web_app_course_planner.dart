@@ -84,8 +84,12 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       // capture is also due. Keep fetched kinds that are absent from this page.
       final byKind = <CoursePlannerImportKind, String>{
         for (final (kind, token) in fetched) kind: token,
-        for (final (kind, token) in displayed) kind: token,
       };
+      for (final (kind, token) in displayed) {
+        byKind[kind] = kind == CoursePlannerImportKind.profile
+            ? reuseCoursePlannerAdmissionYear(token, byKind[kind])
+            : token;
+      }
       final captured = [
         for (final kind in coursePlannerHandoffOrder)
           if (byKind[kind] case final token?) (kind, token),

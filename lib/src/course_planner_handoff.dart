@@ -287,23 +287,43 @@ Future<List<(CoursePlannerImportKind, String)>> captureCoursePlannerHandoffs(
   return supplementCoursePlannerHandoffs(controller, stillCurrent, fetched);
 }
 
-bool validCoursePlannerToken(String token, CoursePlannerImportKind kind) {
+Map<String, dynamic>? _decodeCoursePlannerToken(
+  String token,
+  CoursePlannerImportKind kind,
+) {
   if (!token.startsWith('MBGPLAN1.') ||
       token.length > 2 * 1024 * 1024 ||
       !RegExp(r'^MBGPLAN1\.[A-Za-z0-9_-]+$').hasMatch(token)) {
-    return false;
+    return null;
   }
   try {
-    return encodeCoursePlannerHandoff(
-          jsonDecode(
-            utf8.decode(
-              base64Url.decode(base64Url.normalize(token.substring(9))),
-            ),
-          ),
-          kind,
-        ) ==
-        token;
+    final packet = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(token.substring(9)))),
+    );
+    return encodeCoursePlannerHandoff(packet, kind) == token
+        ? packet as Map<String, dynamic>
+        : null;
   } on Object {
-    return false;
+    return null;
   }
+}
+
+bool validCoursePlannerToken(String token, CoursePlannerImportKind kind) =>
+    _decodeCoursePlannerToken(token, kind) != null;
+
+/// Keep the printed admission year when both views were read in one session.
+String reuseCoursePlannerAdmissionYear(String displayed, String? fetched) {
+  if (fetched == null || fetched == displayed) return displayed;
+  const kind = CoursePlannerImportKind.profile;
+  final old = _decodeCoursePlannerToken(fetched, kind);
+  final year = old?['year'];
+  if (year == null) return displayed;
+  final current = _decodeCoursePlannerToken(displayed, kind);
+  if (current == null ||
+      current['year'] != null ||
+      current['tables'][0]['rows'][1][0] != old!['tables'][0]['rows'][1][0]) {
+    return displayed;
+  }
+  return encodeCoursePlannerHandoff({...current, 'year': year}, kind) ??
+      displayed;
 }

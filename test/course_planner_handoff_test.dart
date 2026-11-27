@@ -41,6 +41,36 @@ class _View extends Fake implements GakujoWebViewController {
 }
 
 void main() {
+  test('displayed affiliation keeps the admission year from the same inquiry', () {
+    String profile(String affiliation, String grade, [String? year]) =>
+        encodeCoursePlannerHandoff({
+          'v': 1,
+          'kind': 'profile',
+          'tables': [
+            {
+              'heading': '学生所属',
+              'rows': [
+                ['所属', '学年'],
+                [affiliation, grade],
+              ],
+            },
+          ],
+          'year': ?year,
+        }, CoursePlannerImportKind.profile)!;
+    final displayed = profile('理学部', '3');
+    final inquiry = profile('理学部', '2', '2024');
+    expect(
+      reuseCoursePlannerAdmissionYear(displayed, inquiry),
+      profile('理学部', '3', '2024'),
+    );
+    expect(
+      reuseCoursePlannerAdmissionYear(displayed, profile('工学部', '2', '2024')),
+      displayed,
+    );
+    final explicit = profile('理学部', '3', '2023');
+    expect(reuseCoursePlannerAdmissionYear(explicit, inquiry), explicit);
+  });
+
   test('the registration encoder matches the shared MBGPLAN1 vector', () {
     const packet = {
       'v': 1,

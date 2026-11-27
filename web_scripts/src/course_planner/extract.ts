@@ -25,6 +25,7 @@ export const names = {
   balances: "履修科目確認表",
   profile: "学生所属",
 };
+export const studentInquiryName = "学籍情報照会";
 const rejected = "不許可となった科目";
 const codePattern = /^(\d{3}[A-Z][A-Z0-9]{4,5})(?:\s*\(T[\d,\s～~-]+\))?$/;
 const offeringColumns = ["開講所属", "クラス", "学期"];
@@ -303,7 +304,7 @@ export function extractor(view: View) {
       )
     )
       kinds.push("balances");
-    if ((grade || registration) && profile(doc)) kinds.push("profile");
+    if ((grade || registration || hasHeading(doc, studentInquiryName)) && profile(doc)) kinds.push("profile");
     return kinds;
   }
   function header(table: HTMLTableElement, kind: AcademicKind) {
@@ -448,6 +449,31 @@ export function extractor(view: View) {
     }
     return rows.length > 1 ? { heading: names.registration, rows } : null;
   }
+  function admissionYear(root: ParentNode) {
+    const years = new Set<string>();
+    for (const cell of Array.from(root.querySelectorAll("th,td,dt"))) {
+      const name = label(cell);
+      if (name !== "入学年度" && name !== "入学年月" && name !== "入学年月日") continue;
+      const value = cell.nextElementSibling;
+      if (!value || !visible(cell) || !visible(value)) continue;
+      const printed = leaf(value).replace(/\s+/g, "");
+      if (!printed) continue;
+      if (name === "入学年度") {
+        years.add(/^((?:19|20)\d{2})(?:年度)?$/.exec(printed)?.[1] || "");
+        continue;
+      }
+      const japanese = /^((?:19|20)\d{2})年(\d{1,2})月(?:(\d{1,2})日)?$/.exec(printed);
+      const numeric = /^((?:19|20)\d{2})([-/.])(\d{1,2})(?:\2(\d{1,2}))?$/.exec(printed);
+      const year = Number(japanese?.[1] ?? numeric?.[1]);
+      const month = Number(japanese?.[2] ?? numeric?.[3]);
+      const day = Number(japanese?.[3] ?? numeric?.[4] ?? "1");
+      const utc = new Date(Date.UTC(year, month - 1, day));
+      const academicYear = month < 4 ? year - 1 : year;
+      years.add(academicYear >= 1900 && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day ? String(academicYear) : "");
+    }
+    return years.size === 1 ? [...years][0] || undefined : undefined;
+  }
+
   function profile(doc: Document) {
     const matches: { table: HTMLTableElement; data: Table }[] = [];
     for (const table of Array.from(doc.querySelectorAll("table")).filter(visible)) {
@@ -494,7 +520,9 @@ export function extractor(view: View) {
   ): Packet | null {
     if (kind === "profile") {
       const projected = profile(doc);
-      return projected ? { v: 1, kind, tables: [projected.data] } : null;
+      if (!projected) return null;
+      const year = admissionYear(hasHeading(doc, studentInquiryName) ? doc : projected.table);
+      return { v: 1, kind, tables: [projected.data], ...(year ? { year } : {}) };
     }
     const tables = current
       .map((t) => tableData(t, kind))
@@ -525,7 +553,7 @@ export function extractor(view: View) {
       ...(year ? { year } : {}),
     };
   }
-  return { visible, pageKinds, academicTables, profile, packet };
+  return { visible, pageKinds, academicTables, profile, admissionYear, packet };
 }
 
 export function withinBounds(tables: Table[]) {
