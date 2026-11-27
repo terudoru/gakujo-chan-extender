@@ -195,75 +195,90 @@ final _privateTitle = RegExp(
   caseSensitive: false,
 );
 bool _gridPosition(Object? value) => value is int && value >= 1 && value <= 7;
-String _termKey(Map<String, dynamic> term) =>
-    '${term['year']}/${term['semester']}';
+String? _termKey(Object? term) {
+  if (term is! Map<String, dynamic> ||
+      term['year'] is! String ||
+      !_academicYear.hasMatch(term['year'] as String) ||
+      !const {'first', 'second'}.contains(term['semester'])) {
+    return null;
+  }
+  return '${term['year']}/${term['semester']}';
+}
 
-List<Map<String, dynamic>> _validateTimetableTerms(
-  Object? terms, {
+bool _validMeetings(List<dynamic> meetings, String year) {
+  final slots = <String>{};
+  final yearSuffix = year.substring(2);
+  for (final meeting in meetings) {
+    if (meeting is! Map<String, dynamic> ||
+        meeting.length != 5 ||
+        meeting['code'] is! String ||
+        !_openingNumber.hasMatch(meeting['code'] as String) ||
+        !(meeting['code'] as String).startsWith(yearSuffix) ||
+        meeting['title'] is! String ||
+        (meeting['title'] as String).length > 140 ||
+        _privateTitle.hasMatch(meeting['title'] as String) ||
+        !const {'許可', '申請中', '要確認'}.contains(meeting['status']) ||
+        !_gridPosition(meeting['day']) ||
+        !_gridPosition(meeting['period']) ||
+        !slots.add('${meeting['code']}/${meeting['day']}/${meeting['period']}')) {
+      return false;
+    }
+  }
+  return slots.isNotEmpty;
+}
+
+({Map<String, Map<String, dynamic>?> terms, bool pending}) _readTimetableTerms(
+  List<Object?> values, {
   String? capturedAt,
 }) {
-  if (terms is! List || terms.length > 60) throw const FormatException();
-  final result = <Map<String, dynamic>>[];
-  final seenTerms = <String>{};
+  if (values.length > 60) throw const FormatException();
+  final terms = <String, Map<String, dynamic>?>{};
+  var pending = false;
   var meetingCount = 0;
-  for (final term in terms) {
-    if (term is! Map<String, dynamic> ||
-        term.length != (capturedAt == null ? 4 : 3) ||
-        !_timestamp(capturedAt ?? term['capturedAt']) ||
-        term['year'] is! String ||
-        !_academicYear.hasMatch(term['year'] as String) ||
-        !const {'first', 'second'}.contains(term['semester']) ||
-        term['meetings'] is! List ||
-        !seenTerms.add(_termKey(term))) {
+  for (final value in values) {
+    final meetings = value is Map<String, dynamic> ? value['meetings'] : null;
+    if (meetings is List && (meetingCount += meetings.length) > 12000) {
       throw const FormatException();
     }
-    final meetings = term['meetings'] as List;
-    meetingCount += meetings.length;
-    if (meetings.isEmpty || meetingCount > 12000) throw const FormatException();
-    final seenMeetings = <String>{};
-    final yearSuffix = (term['year'] as String).substring(2);
-    for (final meeting in meetings) {
-      if (meeting is! Map<String, dynamic> ||
-          meeting.length != 5 ||
-          meeting['code'] is! String ||
-          !_openingNumber.hasMatch(meeting['code'] as String) ||
-          !(meeting['code'] as String).startsWith(yearSuffix) ||
-          meeting['title'] is! String ||
-          (meeting['title'] as String).length > 140 ||
-          _privateTitle.hasMatch(meeting['title'] as String) ||
-          !const {'許可', '申請中', '要確認'}.contains(meeting['status']) ||
-          !_gridPosition(meeting['day']) ||
-          !_gridPosition(meeting['period']) ||
-          !seenMeetings.add('${meeting['code']}/${meeting['day']}/${meeting['period']}')) {
-        throw const FormatException();
-      }
+    final key = _termKey(value);
+    if (key == null) {
+      pending = true;
+      continue;
     }
-    result.add({...term, 'capturedAt': ?capturedAt});
+    final term = value as Map<String, dynamic>;
+    final readable = !terms.containsKey(key) &&
+        term.length == (capturedAt == null ? 4 : 3) &&
+        _timestamp(capturedAt ?? term['capturedAt']) &&
+        meetings is List && _validMeetings(meetings, term['year'] as String);
+    terms[key] = readable ? {...term, 'capturedAt': ?capturedAt} : null;
+    pending |= !readable;
   }
-  return result;
+  return (terms: terms, pending: pending);
 }
 
 class PlannerTimetableStudentMismatch implements Exception {
   const PlannerTimetableStudentMismatch();
 }
 
+enum PlannerTimetableShare { cancelled, pending, complete }
+
 /// A timetable can start empty so a browser can recognize an MBG account
 /// before the first inquiry capture. Update only terms observed in this session.
-Future<bool> shareDrivePlannerTimetable({
+Future<PlannerTimetableShare> shareDrivePlannerTimetable({
   required StarSyncTransport transport,
   required String student,
   required List<Object?> captured,
   required bool Function() allowed,
   required DateTime capturedAt,
 }) async {
-  if (!allowed()) return false;
+  if (!allowed()) return PlannerTimetableShare.cancelled;
   if (!_studentScope.hasMatch(student)) throw const FormatException();
-  final observed = _validateTimetableTerms(
+  final observed = _readTimetableTerms(
     captured,
     capturedAt: plannerTimestamp(capturedAt),
   );
   final binding = await transport.get(_plannerBindingName, maxBytes: 4096);
-  if (!allowed()) return false;
+  if (!allowed()) return PlannerTimetableShare.cancelled;
   if (binding != null) {
     final value = jsonDecode(utf8.decode(binding.bytes));
     if (value is! Map || value['v'] != 1 || value['scope'] != student) {
@@ -274,8 +289,8 @@ Future<bool> shareDrivePlannerTimetable({
     drivePlannerTimetableName,
     maxBytes: _plannerTimetableMaxBytes,
   );
-  if (!allowed()) return false;
-  final terms = <String, Map<String, dynamic>>{};
+  if (!allowed()) return PlannerTimetableShare.cancelled;
+  var stored = const <Object?>[];
   if (remote != null) {
     final value = jsonDecode(utf8.decode(remote.bytes));
     if (value is! Map || value.length != 4 || value['v'] != 1 ||
@@ -283,31 +298,43 @@ Future<bool> shareDrivePlannerTimetable({
       throw const FormatException();
     }
     if (value['student'] != student) throw const PlannerTimetableStudentMismatch();
-    for (final term in _validateTimetableTerms(value['terms'])) {
-      terms[_termKey(term)] = term;
-    }
+    if (value['terms'] is! List) throw const FormatException();
+    stored = value['terms'] as List;
   }
-  var changed = remote == null;
-  for (final term in observed) {
-    final key = _termKey(term);
-    final previous = terms[key];
+  final existing = _readTimetableTerms(stored);
+  final updates = <String, Map<String, dynamic>>{};
+  for (final MapEntry(:key, value: term) in observed.terms.entries) {
+    if (term == null) continue;
+    final previous = existing.terms[key];
     if (previous != null &&
         ((previous['capturedAt'] as String).compareTo(term['capturedAt'] as String) >= 0 ||
             jsonEncode(previous['meetings']) == jsonEncode(term['meetings']))) {
       continue;
     }
-    terms[key] = term;
-    changed = true;
+    updates[key] = term;
   }
-  if (!changed) return true;
+  if (updates.isEmpty && remote != null) {
+    return observed.pending || existing.pending
+        ? PlannerTimetableShare.pending
+        : PlannerTimetableShare.complete;
+  }
+  final merged = <Object?>[
+    for (final term in stored)
+      if (!updates.containsKey(_termKey(term))) term,
+    ...updates.values,
+  ];
+  final result = _readTimetableTerms(merged);
   final bytes = utf8.encode(jsonEncode({
     'v': 1,
     'kind': 'mbg-gakujo-timetable',
     'student': student,
-    'terms': _validateTimetableTerms(terms.values.toList()),
+    'terms': merged,
   }));
   if (bytes.length > _plannerTimetableMaxBytes) throw const FormatException();
-  if (!allowed()) return false;
+  if (!allowed()) return PlannerTimetableShare.cancelled;
   await transport.put(drivePlannerTimetableName, bytes, createOnly: remote == null);
-  return allowed();
+  if (!allowed()) return PlannerTimetableShare.cancelled;
+  return observed.pending || result.pending
+      ? PlannerTimetableShare.pending
+      : PlannerTimetableShare.complete;
 }

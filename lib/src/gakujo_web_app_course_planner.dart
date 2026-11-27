@@ -99,15 +99,16 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         checkCurrent: checkCurrent,
       );
       // Publish the account marker before a portal request can stall.
-      if (student != null && background &&
-          !await shareDrivePlannerTimetable(
-            transport: transport,
-            student: student,
-            captured: const [],
-            allowed: allowed,
-            capturedAt: now,
-          )) {
-        return;
+      var timetableShare = PlannerTimetableShare.complete;
+      if (student != null && background) {
+        timetableShare = await shareDrivePlannerTimetable(
+          transport: transport,
+          student: student,
+          captured: const [],
+          allowed: allowed,
+          capturedAt: now,
+        );
+        if (timetableShare == PlannerTimetableShare.cancelled) return;
       }
       final displayed = await captureCoursePlannerHandoffs(
         _controller,
@@ -158,16 +159,18 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       ];
       final capturedAt = DateTime.now().toUtc();
       if (!captureAllowed() || (captured.isEmpty && !background && timetable.isEmpty)) return;
-      if (student != null && (timetable.isNotEmpty || !background) &&
-          !await shareDrivePlannerTimetable(
-            transport: transport,
-            student: student,
-            captured: timetable,
-            allowed: allowed,
-            capturedAt: capturedAt,
-          )) {
-        return;
+      if (student != null && (timetable.isNotEmpty || !background)) {
+        timetableShare = await shareDrivePlannerTimetable(
+          transport: transport,
+          student: student,
+          captured: timetable,
+          allowed: allowed,
+          capturedAt: capturedAt,
+        );
+        if (timetableShare == PlannerTimetableShare.cancelled) return;
       }
+      final timetablePending = timetableShare == PlannerTimetableShare.pending;
+      complete &= !timetablePending;
       final success = captured.isEmpty ||
           await shareDrivePlannerHandoffs(
             transport: transport,
@@ -176,6 +179,10 @@ extension _CoursePlannerActions on _GakujoWebAppState {
             capturedAt: capturedAt,
             preserveAcademicHistory: student != null,
           );
+      if (timetablePending && !retryCapture && allowed()) {
+        await storage.delete(key: key);
+        retryCapture = true;
+      }
       if (success && allowed()) {
         if (captured.isNotEmpty && (!background || complete)) {
           await transport.removePlannerDuplicates();

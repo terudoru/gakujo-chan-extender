@@ -80,7 +80,9 @@ void main() {
           'status': '許可', 'day': day, 'period': 3},
       ],
     };
-    Future<bool> shareTerms(List<Object?> captured, {String? owner, int days = 0}) =>
+    Future<PlannerTimetableShare> shareTerms(
+      List<Object?> captured, {String? owner, int days = 0}
+    ) =>
         shareDrivePlannerTimetable(
           transport: drive,
           student: owner ?? student,
@@ -88,16 +90,34 @@ void main() {
           allowed: () => true,
           capturedAt: time.add(Duration(days: days)),
         );
-    expect(await shareTerms([]), isTrue);
+    expect(await shareTerms([]), PlannerTimetableShare.complete);
     expect(terms(), isEmpty);
-    expect(await shareTerms([term('2025', 'second', 2), term('2026', 'first', 4)], days: 1), isTrue);
-    expect(await shareTerms([term('2026', 'first', 3)], days: 2), isTrue);
-    expect(await shareTerms([term('2026', 'first', 5)], days: 1), isTrue);
+    expect(await shareTerms([term('2025', 'second', 2), term('2026', 'first', 4)], days: 1),
+      PlannerTimetableShare.complete);
+    expect(await shareTerms([term('2026', 'first', 3)], days: 2), PlannerTimetableShare.complete);
+    expect(await shareTerms([term('2026', 'first', 5)], days: 1), PlannerTimetableShare.complete);
     expect(terms().map((term) => term['meetings'][0]['day']), [2, 3]);
     expect(drive.writes, 3);
     await expectLater(shareTerms([], owner: 'b' * 43), throwsA(isA<PlannerTimetableStudentMismatch>()));
-    await expectLater(shareTerms([term('2025', 'second', 8)], days: 3), throwsFormatException);
+    expect(await shareTerms([term('2025', 'second', 8)], days: 3), PlannerTimetableShare.pending);
     expect(drive.writes, 3);
+
+    final unreadable = {
+      ...term('2024', 'first', 0), 'capturedAt': plannerTimestamp(time),
+    };
+    drive.extra[drivePlannerTimetableName] = utf8.encode(jsonEncode({
+      'v': 1, 'kind': 'mbg-gakujo-timetable', 'student': student,
+      'terms': [...terms(), unreadable, term('2024', 'second', 5)],
+    }));
+    expect(await shareTerms([]), PlannerTimetableShare.pending);
+    expect(drive.writes, 3);
+    expect(await shareTerms([term('2026', 'second', 7), term('2024', 'second', 9)], days: 3),
+      PlannerTimetableShare.pending);
+    expect(terms().map((term) => term['meetings'][0]['day']), [2, 3, 0, 5, 7]);
+    expect(await shareTerms([term('2024', 'first', 4), term('2024', 'second', 5)], days: 4),
+      PlannerTimetableShare.complete);
+    expect(terms().map((term) => term['meetings'][0]['day']), [2, 3, 7, 4, 5]);
+    expect(drive.writes, 5);
   });
 
   Future<bool> share(
